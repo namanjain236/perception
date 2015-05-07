@@ -213,7 +213,6 @@ int main(int argc, char **argv) {
   // Plan
   
 
-  if (world_rank == 0) {
     // SBPLPlanner *planner  = new LazyARAPlanner(env_obj, true);
     MHAPlanner *planner  = new MHAPlanner(env_obj, 2, true);
 
@@ -231,50 +230,46 @@ int main(int argc, char **argv) {
     }
 
 
-    MHAReplanParams replan_params(60.0);
-    replan_params.max_time = 60.0;
-    replan_params.initial_eps = 1.0;
-    replan_params.final_eps = 1.0;
-    replan_params.dec_eps = 0.2;
-    replan_params.return_first_solution =
-      true; // Setting this to true also means planner will ignore max time limit.
-    replan_params.repair_time = -1;
-    replan_params.inflation_eps = 10.0; //10000000.0
-    replan_params.anchor_eps = 1.0;
-    replan_params.use_anchor = true;
-    replan_params.meta_search_type = mha_planner::MetaSearchType::ROUND_ROBIN; //DTS
-    replan_params.planner_type = mha_planner::PlannerType::SMHA;
-    replan_params.mha_type =
-      mha_planner::MHAType::PLUS; // PLUS
+  MHAReplanParams replan_params(60.0);
+  replan_params.max_time = 60.0;
+  replan_params.initial_eps = 1.0;
+  replan_params.final_eps = 1.0;
+  replan_params.dec_eps = 0.2;
+  replan_params.return_first_solution =
+    true; // Setting this to true also means planner will ignore max time limit.
+  replan_params.repair_time = -1;
+  replan_params.inflation_eps = 10.0; //10000000.0
+  replan_params.anchor_eps = 1.0;
+  replan_params.use_anchor = true;
+  replan_params.meta_search_type = mha_planner::MetaSearchType::ROUND_ROBIN; //DTS
+  replan_params.planner_type = mha_planner::PlannerType::SMHA;
+  replan_params.mha_type =
+    mha_planner::MHAType::PLUS; // PLUS
 
-    // ReplanParams params(600.0);
-    // params.max_time = 600.0;
-    // params.initial_eps = 100000.0;
-    // params.final_eps = 2.0;
-    // params.dec_eps = 1000;
-    // params.return_first_solution = true ;
-    // params.repair_time = -1;
+  // ReplanParams params(600.0);
+  // params.max_time = 600.0;
+  // params.initial_eps = 100000.0;
+  // params.final_eps = 2.0;
+  // params.dec_eps = 1000;
+  // params.return_first_solution = true ;
+  // params.repair_time = -1;
 
-    vector<int> solution_state_ids;
-    int sol_cost;
+  vector<int> solution_state_ids;
+  int sol_cost;
 
-    ROS_INFO("Begin planning");
-    bool plan_success = planner->replan(&solution_state_ids,
-                                        static_cast<MHAReplanParams>(replan_params), &sol_cost);
-    ROS_INFO("Done planning");
-    ROS_INFO("Size of solution: %d", solution_state_ids.size());
+  ROS_INFO("Begin planning");
+  bool plan_success = planner->replan(&solution_state_ids,
+                                      static_cast<MHAReplanParams>(replan_params), &sol_cost);
+  ROS_INFO("Done planning");
+  ROS_INFO("Size of solution: %d", solution_state_ids.size());
 
-    for (int ii = 0; ii < solution_state_ids.size(); ++ii) {
-      printf("%d: %d\n", ii, solution_state_ids[ii]);
-    }
-
-    assert(solution_state_ids.size() > 1);
-    env_obj->PrintState(solution_state_ids[solution_state_ids.size() - 2],
-                        string("/tmp/goal_state.png"));
+  for (int ii = 0; ii < solution_state_ids.size(); ++ii) {
+    printf("%d: %d\n", ii, solution_state_ids[ii]);
   }
-  else {
-    
-  }
+
+  assert(solution_state_ids.size() > 1);
+  env_obj->PrintState(solution_state_ids[solution_state_ids.size() - 2],
+                      string("/tmp/goal_state.png"));
   // Finalize the MPI environment. No more MPI calls can be made after this
   MPI_Finalize();
   return 0;
