@@ -13,6 +13,7 @@
 
 #include <chrono>
 #include <random>
+#include <mpi.h>
 
 
 using namespace std;
@@ -23,7 +24,26 @@ const string kPCDFilename =  ros::package::getPath("sbpl_perception") +
                              "/data/pointclouds/test14.pcd";
 
 int main(int argc, char **argv) {
-  ros::init(argc, argv, "sim_test");
+  
+  MPI_Init(NULL, NULL);
+
+  // Get the number of processes
+  int world_size;
+  MPI_Comm_size(MPI_COMM_WORLD, &world_size);
+
+  // Get the rank of the process
+  int world_rank;
+  MPI_Comm_rank(MPI_COMM_WORLD, &world_rank);
+
+  // Get the name of the processor
+  char processor_name[MPI_MAX_PROCESSOR_NAME];
+  int name_len;
+  MPI_Get_processor_name(processor_name, &name_len);
+
+  char name[20];
+  sprintf(name, "sim_test");
+
+  ros::init(argc, argv, name);
   ros::NodeHandle nh;
   ros::NodeHandle private_nh("~");
 
@@ -34,6 +54,10 @@ int main(int argc, char **argv) {
   printf("There are %d model files\n", model_files.size());
 
   EnvObjectRecognition *env_obj = new EnvObjectRecognition(nh);
+
+  // Print off a hello world message
+  printf("Hello world from processor %s, rank %d out of %d processors\n",
+         processor_name, world_rank, world_size);
 
 
   // Set model files
@@ -148,6 +172,9 @@ int main(int argc, char **argv) {
   model_ids.push_back(1);
   model_ids.push_back(2);
 
+
+  std::cout << "proc: " << world_rank << ", size: " << model_ids.size() << std::endl;
+
   // Min z test
   //  0.013908 0.367176 3.825993
   //  0.259146 0.045195 1.887071
@@ -186,63 +213,70 @@ int main(int argc, char **argv) {
   // Plan
   
 
-  // SBPLPlanner *planner  = new LazyARAPlanner(env_obj, true);
-  MHAPlanner *planner  = new MHAPlanner(env_obj, 2, true);
+  if (world_rank == 0) {
+    // SBPLPlanner *planner  = new LazyARAPlanner(env_obj, true);
+    MHAPlanner *planner  = new MHAPlanner(env_obj, 2, true);
 
-  int goal_id = env_obj->GetGoalStateID();
-  int start_id = env_obj->GetStartStateID();
+    int goal_id = env_obj->GetGoalStateID();
+    int start_id = env_obj->GetStartStateID();
 
-  if (planner->set_start(start_id) == 0) {
-    ROS_ERROR("ERROR: failed to set start state");
-    throw std::runtime_error("failed to set start state");
+    if (planner->set_start(start_id) == 0) {
+      ROS_ERROR("ERROR: failed to set start state");
+      throw std::runtime_error("failed to set start state");
+    }
+
+    if (planner->set_goal(goal_id) == 0) {
+      ROS_ERROR("ERROR: failed to set goal state");
+      throw std::runtime_error("failed to set goal state");
+    }
+
+
+    MHAReplanParams replan_params(60.0);
+    replan_params.max_time = 60.0;
+    replan_params.initial_eps = 1.0;
+    replan_params.final_eps = 1.0;
+    replan_params.dec_eps = 0.2;
+    replan_params.return_first_solution =
+      true; // Setting this to true also means planner will ignore max time limit.
+    replan_params.repair_time = -1;
+    replan_params.inflation_eps = 10.0; //10000000.0
+    replan_params.anchor_eps = 1.0;
+    replan_params.use_anchor = true;
+    replan_params.meta_search_type = mha_planner::MetaSearchType::ROUND_ROBIN; //DTS
+    replan_params.planner_type = mha_planner::PlannerType::SMHA;
+    replan_params.mha_type =
+      mha_planner::MHAType::PLUS; // PLUS
+
+    // ReplanParams params(600.0);
+    // params.max_time = 600.0;
+    // params.initial_eps = 100000.0;
+    // params.final_eps = 2.0;
+    // params.dec_eps = 1000;
+    // params.return_first_solution = true ;
+    // params.repair_time = -1;
+
+    vector<int> solution_state_ids;
+    int sol_cost;
+
+    ROS_INFO("Begin planning");
+    bool plan_success = planner->replan(&solution_state_ids,
+                                        static_cast<MHAReplanParams>(replan_params), &sol_cost);
+    ROS_INFO("Done planning");
+    ROS_INFO("Size of solution: %d", solution_state_ids.size());
+
+    for (int ii = 0; ii < solution_state_ids.size(); ++ii) {
+      printf("%d: %d\n", ii, solution_state_ids[ii]);
+    }
+
+    assert(solution_state_ids.size() > 1);
+    env_obj->PrintState(solution_state_ids[solution_state_ids.size() - 2],
+                        string("/tmp/goal_state.png"));
   }
-
-  if (planner->set_goal(goal_id) == 0) {
-    ROS_ERROR("ERROR: failed to set goal state");
-    throw std::runtime_error("failed to set goal state");
+  else {
+    
   }
-
-
-  MHAReplanParams replan_params(60.0);
-  replan_params.max_time = 60.0;
-  replan_params.initial_eps = 1.0;
-  replan_params.final_eps = 1.0;
-  replan_params.dec_eps = 0.2;
-  replan_params.return_first_solution =
-    true; // Setting this to true also means planner will ignore max time limit.
-  replan_params.repair_time = -1;
-  replan_params.inflation_eps = 10.0; //10000000.0
-  replan_params.anchor_eps = 1.0;
-  replan_params.use_anchor = true;
-  replan_params.meta_search_type = mha_planner::MetaSearchType::ROUND_ROBIN; //DTS
-  replan_params.planner_type = mha_planner::PlannerType::SMHA;
-  replan_params.mha_type =
-    mha_planner::MHAType::PLUS; // PLUS
-
-  // ReplanParams params(600.0);
-  // params.max_time = 600.0;
-  // params.initial_eps = 100000.0;
-  // params.final_eps = 2.0;
-  // params.dec_eps = 1000;
-  // params.return_first_solution = true ;
-  // params.repair_time = -1;
-
-  vector<int> solution_state_ids;
-  int sol_cost;
-
-  ROS_INFO("Begin planning");
-  bool plan_success = planner->replan(&solution_state_ids,
-                                      static_cast<MHAReplanParams>(replan_params), &sol_cost);
-  ROS_INFO("Done planning");
-  ROS_INFO("Size of solution: %d", solution_state_ids.size());
-
-  for (int ii = 0; ii < solution_state_ids.size(); ++ii) {
-    printf("%d: %d\n", ii, solution_state_ids[ii]);
-  }
-
-  assert(solution_state_ids.size() > 1);
-  env_obj->PrintState(solution_state_ids[solution_state_ids.size() - 2],
-                      string("/tmp/goal_state.png"));
+  // Finalize the MPI environment. No more MPI calls can be made after this
+  MPI_Finalize();
   return 0;
 }
 

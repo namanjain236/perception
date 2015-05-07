@@ -10,6 +10,9 @@ include($ENV{ROS_ROOT}/core/rosbuild/rosbuild.cmake)
 #set(ROS_BUILD_TYPE RelWithDebInfo)
 set(ROS_BUILD_TYPE Debug)
 set(CMAKE_CXX_FLAGS "-std=c++0x")
+# set(CMAKE_CXX_COMPILER mpicxx)
+# set(CMAKE_CXX_COMPILER_WITH_PATH "/home/namanj/.openmpi/bin/mpicxx")
+# set(CMAKE_C_COMPILER mpicc)
 # set(CMAKE_COLOR_MAKEFILE ON)
 
 
@@ -25,6 +28,13 @@ rosbuild_init()
 
 find_package(OpenCV REQUIRED)
 include_directories(${OpenCV_INCLUDE_DIRS} )
+
+find_package(MPI REQUIRED)
+include(CMakeForceCompiler)
+CMAKE_FORCE_CXX_COMPILER(mpicxx ${CMAKE_CXX_COMPILER_ID})
+set(CMAKE_CXX_COMPILE_FLAGS ${CMAKE_CXX_COMPILE_FLAGS} ${MPI_COMPILE_FLAGS})
+set(CMAKE_CXX_LINK_FLAGS ${CMAKE_CXX_LINK_FLAGS} ${MPI_LINK_FLAGS})
+include_directories(MPI_INCLUDE_PATH)
 
 
 
@@ -55,7 +65,7 @@ target_link_libraries(object_recognition_node libvtkCommon.so libvtkFiltering.so
 rosbuild_add_executable(sim_test src/experiments/sim_test.cpp)
 target_link_libraries(sim_test ${PROJECT_NAME})
 target_link_libraries(sim_test libvtkCommon.so libvtkFiltering.so libvtkRendering.so libvtkIO.so
-  libvtkGraphics.so)
+  libvtkGraphics.so ${MPI_LIBRARIES})
 
 rosbuild_add_executable(experiments src/experiments/experiments.cpp)
 target_link_libraries(experiments ${PROJECT_NAME})

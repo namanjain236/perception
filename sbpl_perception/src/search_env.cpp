@@ -7,6 +7,7 @@
 
 #include <sbpl_perception/search_env.h>
 #include <sbpl_perception/perception_utils.h>
+#include <sbpl_perception/cycleTimer.h>
 
 #include <ros/ros.h>
 #include <ros/package.h>
@@ -32,6 +33,7 @@
 #include <opencv2/contrib/contrib.hpp>
 
 #include <boost/lexical_cast.hpp>
+#include <mpi.h>
 
 
 using namespace std;
@@ -45,6 +47,12 @@ const double kSensorResolutionSqr = kSensorResolution * kSensorResolution;
 
 const string kDebugDir = ros::package::getPath("sbpl_perception") +
                          "/visualization/";
+
+#define PROFILE 1
+
+#if PROFILE
+static double diff = 0;
+#endif
 
 ObjectModel::ObjectModel(const pcl::PolygonMesh mesh, const bool symmetric) {
   mesh_ = mesh;
@@ -79,13 +87,14 @@ EnvObjectRecognition::EnvObjectRecognition(ros::NodeHandle nh) : nh_(nh),
   private_nh.param("image_debug", image_debug_, true);
   private_nh.param("icp_succ", icp_succ_, false);
 
-
   char **argv;
   argv = new char *[2];
   argv[0] = new char[1];
   argv[1] = new char[1];
   argv[0] = "0";
   argv[1] = "1";
+
+  std::cout << "From Constructor" << std::endl;
 
   std::vector<Eigen::Isometry3d, Eigen::aligned_allocator<Eigen::Isometry3d>>
                                                                            poses;
@@ -626,6 +635,13 @@ int EnvObjectRecognition::GetTrueCost(int parent_id, int child_id) {
   //   return -1;
   // }
 
+#if PROFILE
+  FILE * pFile;
+  pFile = fopen ("/home/namanj/profile.txt","a");
+  double startTime = CycleTimer::currentSeconds();
+#endif
+
+
   State source_state = StateIDToState(parent_id);
   State child_state = StateIDToState(child_id);
   assert(child_state.object_ids.size() > 0);
@@ -747,7 +763,12 @@ int EnvObjectRecognition::GetTrueCost(int parent_id, int child_id) {
              source_cost, total_cost, maxz_map_[parent_id],
              maxz_map_[child_id], counted_pixels_map_[parent_id].size());
   }
-
+#if PROFILE
+  double endTime = CycleTimer::currentSeconds();
+  diff += (endTime - startTime);
+  fprintf(pFile, "Render:   %.4f ms\n", 1000.f * diff);
+  fclose(pFile);
+#endif
   return total_cost;
 }
 
@@ -1284,7 +1305,8 @@ void EnvObjectRecognition::SetObservation(vector<int> object_ids,
 
   for (size_t ii = 0; ii < object_ids.size(); ++ii) {
     if (object_ids[ii] >= env_params_.num_models) {
-      ROS_ERROR("Invalid object ID %d when setting ground truth", object_ids[ii]);
+      ROS_ERROR("Invalid object ID %d with (%d) when setting ground truth", object_ids[ii],
+                      env_params_.num_models);
     }
 
     s.object_ids.push_back(object_ids[ii]);
