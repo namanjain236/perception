@@ -48,7 +48,7 @@ const double kSensorResolutionSqr = kSensorResolution * kSensorResolution;
 const string kDebugDir = ros::package::getPath("sbpl_perception") +
                          "/visualization/";
 
-#define PROFILE 1
+#define PROFILE 0
 
 #if PROFILE
 static double diff = 0;
@@ -452,6 +452,8 @@ void EnvObjectRecognition::GetSuccs(int source_state_id,
 
     candidate_costs.push_back(cost);
   }
+
+  MPI_Barrier(MPI_COMM_WORLD);
 
   //--------------------------------------//
 
