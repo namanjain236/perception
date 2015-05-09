@@ -42,6 +42,8 @@
 #include <Eigen/Dense>
 #include <unordered_map>
 
+#define NUM_MODELS 3
+
 inline double WrapAngle(double x) {
   x = fmod(x, 360);
 
@@ -155,14 +157,78 @@ struct StateProperties {
   unsigned short last_max_depth;
 };
 
+typedef struct {
+  int x;
+  int y;
+  int theta;
+} BaseDisc;
+
+typedef struct {
+  double x;
+  double y;
+  double theta;
+} BasePose;
+
+typedef struct {
+  int source_ids[NUM_MODELS];
+  int source_disc[NUM_MODELS*3];
+  double source_pose[NUM_MODELS*3];
+  int cand_ids[NUM_MODELS];
+  int cand_disc[NUM_MODELS*3];
+  double cand_pose[NUM_MODELS*3];
+  int source_id;
+  int cand_id;
+  int valid;
+} SendMsg;
+
+typedef struct {
+  int child_ids[NUM_MODELS];
+  int child_disc[NUM_MODELS*3];
+  double child_pose[NUM_MODELS*3];
+  unsigned short last_min_depth;
+  unsigned short last_max_depth;
+  int cost;
+  int valid;
+} RecvMsg;
+
 // class EnvObjectRecognition : public DiscreteSpaceInformation {
 class EnvObjectRecognition : public EnvironmentMHA {
  public:
   EnvObjectRecognition(ros::NodeHandle nh);
+  EnvObjectRecognition(ros::NodeHandle nh, int size, int rank);
   ~EnvObjectRecognition();
+  int id;
+  int num_proc;
   void LoadObjFiles(const std::vector<std::string> &model_files,
                     const std::vector<bool> model_symmetric);
   void SetScene();
+
+  int ExpectedCountScatter(int *expected);
+  void DataScatter(SendMsg* sendbuf, SendMsg* getbuf, int expected_count);
+  int GetRecvdState(State *work_source_state, 
+                    State *work_cand_succs,
+                    int *work_source_id,
+                    int *work_cand_id,
+                    SendMsg* dummy,
+                    int val);
+  void SendbufPopulate(SendMsg *sendbuf, 
+    State s, State p, int sid, int pid);
+  void RecvbufPopulate(RecvMsg* sendbuf, 
+                        State& s,
+                        StateProperties& child_properties,
+                        int cost);
+  int GetRecvdResult(State *work_source_state, 
+                                          StateProperties *child_properties_result,
+                                          int *cost_result,
+                                          RecvMsg* dummy,
+                                          int tot);
+
+  void DataGather(RecvMsg* recvbuf, 
+                    RecvMsg* getresult, int expected_count);
+  void DebugPrint(State s);
+  void DebugPrintArray(SendMsg* s);
+  void DebugPrintArrayRecv(RecvMsg* s);
+
   void WriteSimOutput(std::string fname_root);
   void PrintState(int state_id, std::string fname);
   void PrintState(State s, std::string fname);

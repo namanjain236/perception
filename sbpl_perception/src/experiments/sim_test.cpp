@@ -53,7 +53,7 @@ int main(int argc, char **argv) {
   private_nh.param("model_symmetries", symmetries, empty_symmetries);
   printf("There are %d model files\n", model_files.size());
 
-  EnvObjectRecognition *env_obj = new EnvObjectRecognition(nh);
+  EnvObjectRecognition *env_obj = new EnvObjectRecognition(nh, world_rank, world_size);
 
   // Print off a hello world message
   printf("Hello world from processor %s, rank %d out of %d processors\n",
@@ -212,7 +212,7 @@ int main(int argc, char **argv) {
 
   // Plan
   
-
+  if (world_rank == 0) {
     // SBPLPlanner *planner  = new LazyARAPlanner(env_obj, true);
     MHAPlanner *planner  = new MHAPlanner(env_obj, 2, true);
 
@@ -230,46 +230,107 @@ int main(int argc, char **argv) {
     }
 
 
-  MHAReplanParams replan_params(60.0);
-  replan_params.max_time = 60.0;
-  replan_params.initial_eps = 1.0;
-  replan_params.final_eps = 1.0;
-  replan_params.dec_eps = 0.2;
-  replan_params.return_first_solution =
-    true; // Setting this to true also means planner will ignore max time limit.
-  replan_params.repair_time = -1;
-  replan_params.inflation_eps = 10.0; //10000000.0
-  replan_params.anchor_eps = 1.0;
-  replan_params.use_anchor = true;
-  replan_params.meta_search_type = mha_planner::MetaSearchType::ROUND_ROBIN; //DTS
-  replan_params.planner_type = mha_planner::PlannerType::SMHA;
-  replan_params.mha_type =
-    mha_planner::MHAType::PLUS; // PLUS
+    MHAReplanParams replan_params(60.0);
+    replan_params.max_time = 60.0;
+    replan_params.initial_eps = 1.0;
+    replan_params.final_eps = 1.0;
+    replan_params.dec_eps = 0.2;
+    replan_params.return_first_solution =
+      true; // Setting this to true also means planner will ignore max time limit.
+    replan_params.repair_time = -1;
+    replan_params.inflation_eps = 10.0; //10000000.0
+    replan_params.anchor_eps = 1.0;
+    replan_params.use_anchor = true;
+    replan_params.meta_search_type = mha_planner::MetaSearchType::ROUND_ROBIN; //DTS
+    replan_params.planner_type = mha_planner::PlannerType::SMHA;
+    replan_params.mha_type =
+      mha_planner::MHAType::PLUS; // PLUS
 
-  // ReplanParams params(600.0);
-  // params.max_time = 600.0;
-  // params.initial_eps = 100000.0;
-  // params.final_eps = 2.0;
-  // params.dec_eps = 1000;
-  // params.return_first_solution = true ;
-  // params.repair_time = -1;
+    /*ReplanParams params(600.0);
+    params.max_time = 600.0;
+    params.initial_eps = 100000.0;
+    params.final_eps = 2.0;
+    params.dec_eps = 1000;
+    params.return_first_solution = true ;
+    params.repair_time = -1;*/
 
-  vector<int> solution_state_ids;
-  int sol_cost;
+    vector<int> solution_state_ids;
+    int sol_cost;
 
-  ROS_INFO("Begin planning");
-  bool plan_success = planner->replan(&solution_state_ids,
-                                      static_cast<MHAReplanParams>(replan_params), &sol_cost);
-  ROS_INFO("Done planning");
-  ROS_INFO("Size of solution: %d", solution_state_ids.size());
+    ROS_INFO("Begin planning");
+    bool plan_success = planner->replan(&solution_state_ids,
+                                        static_cast<MHAReplanParams>(replan_params), &sol_cost);
+    ROS_INFO("Done planning");
+    ROS_INFO("Size of solution: %d", solution_state_ids.size());
 
-  for (int ii = 0; ii < solution_state_ids.size(); ++ii) {
-    printf("%d: %d\n", ii, solution_state_ids[ii]);
+    for (int ii = 0; ii < solution_state_ids.size(); ++ii) {
+      printf("%d: %d\n", ii, solution_state_ids[ii]);
+    }
+
+    assert(solution_state_ids.size() > 1);
+    env_obj->PrintState(solution_state_ids[solution_state_ids.size() - 2],
+                        string("/tmp/goal_state.png"));
+  } else {
+    while (1) {
+      // int number;
+      // MPI_Recv(&number, 1, MPI_INT, 0, 0, MPI_COMM_WORLD, MPI_STATUS_IGNORE);
+      // printf("Process 1 received number %d from process %d\n", number, world_rank);
+      int* dummy_int;
+      SendMsg* dummy_sendmsg;
+      RecvMsg* dummy_recvmsg;
+      int count = env_obj->ExpectedCountScatter(dummy_int);
+      std::cout << "Proc: " << env_obj->id << "received " << count << std::endl;
+      SendMsg* recvbuf = (SendMsg*) malloc(count * sizeof(SendMsg));
+      env_obj->DataScatter(dummy_sendmsg, recvbuf, count);
+
+      // std::cout << "Proc: " << env_obj->id << "printing " << std::endl;
+      // env_obj->DebugPrintArray(recvbuf);
+
+      State* work_source_state = new State[count];
+      State* work_cand_succs = new State[count];
+      int* work_source_id = (int *) malloc(count * sizeof(int));
+      int* work_cand_id = (int *) malloc(count * sizeof(int));
+
+      int count_valid = env_obj->GetRecvdState(work_source_state, work_cand_succs,
+                    work_source_id, work_cand_id, recvbuf, count);
+
+      free(recvbuf);
+
+      State* adjusted_child_state = new State[count];
+      StateProperties* child_properties = new StateProperties[count];
+      int* cost = (int *) malloc(count * sizeof(int));
+
+      for (int ii = 0; ii < count_valid; ii++) {
+        cost[ii] = env_obj->GetTrueCost(work_source_state[ii], 
+                                work_cand_succs[ii],
+                                work_source_id[ii],
+                                work_cand_id[ii],
+                                &adjusted_child_state[ii],
+                                &child_properties[ii]);
+      }
+
+      // workers result buf
+      RecvMsg* recvbuf_worker = (RecvMsg*) malloc(count * sizeof(RecvMsg));
+      
+      for (int i = 0; i < count; i++)
+        recvbuf_worker[i].valid = -1;
+
+      RecvMsg* recvtemp = recvbuf_worker;
+
+      for (size_t ii = 0; ii < count_valid; ++ii) {
+        env_obj->RecvbufPopulate(recvtemp, adjusted_child_state[ii], child_properties[ii], cost[ii]);
+        recvtemp++;
+      }
+
+      // free(adjusted_child_state);
+      // free(child_properties);
+      // free(cost);
+
+      env_obj->DataGather(recvbuf_worker, dummy_recvmsg, count);
+
+      free(recvbuf_worker);
+    }
   }
-
-  assert(solution_state_ids.size() > 1);
-  env_obj->PrintState(solution_state_ids[solution_state_ids.size() - 2],
-                      string("/tmp/goal_state.png"));
   // Finalize the MPI environment. No more MPI calls can be made after this
   MPI_Finalize();
   return 0;

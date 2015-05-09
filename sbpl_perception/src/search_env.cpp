@@ -34,6 +34,7 @@
 
 #include <boost/lexical_cast.hpp>
 #include <mpi.h>
+#include <assert.h>
 
 
 using namespace std;
@@ -79,6 +80,107 @@ void ObjectModel::SetObjectProperties() {
 EnvObjectRecognition::EnvObjectRecognition(ros::NodeHandle nh) : nh_(nh),
   use_cloud_cost_(false),
   max_z_seen_(-1.0) {
+  ros::NodeHandle private_nh("~");
+  private_nh.param("reference_frame", reference_frame_,
+                   std::string("/base_link"));
+  vector<string> empty_model_files;
+  private_nh.param("model_files", model_files_, empty_model_files);
+  private_nh.param("image_debug", image_debug_, true);
+  private_nh.param("icp_succ", icp_succ_, false);
+
+  char **argv;
+  argv = new char *[2];
+  argv[0] = new char[1];
+  argv[1] = new char[1];
+  argv[0] = "0";
+  argv[1] = "1";
+
+  std::cout << "From Constructor" << std::endl;
+
+  std::vector<Eigen::Isometry3d, Eigen::aligned_allocator<Eigen::Isometry3d>>
+                                                                           poses;
+  Eigen::Vector3d focus_center(0, 0, 0);
+  double halo_r = 1.0;//4
+  double halo_dz = 0.5;//2
+  int n_poses = 1; //16
+  GenerateHalo(poses, focus_center, halo_r, halo_dz, n_poses);
+
+  env_params_.x_min = -0.3;
+  env_params_.x_max = 0.31;
+  env_params_.y_min = -0.3;
+  env_params_.y_max = 0.31;
+
+  // env_params_.res = 0.05;
+  // env_params_.theta_res = M_PI / 10; //8
+
+  env_params_.res = 0.2; //0.2
+  const int num_thetas = 16;
+  env_params_.theta_res = 2 * M_PI / static_cast<double>(num_thetas); //8
+
+  env_params_.table_height = 0;
+  env_params_.camera_pose = poses[0];
+  env_params_.img_width = 640;
+  env_params_.img_height = 480;
+  env_params_.num_models = 0;
+  env_params_.num_objects = 0;
+
+  env_params_.observed_max_range = 20000;
+  env_params_.observed_min_range = 0;
+
+  Pose fake_pose(0.0, 0.0, 0.0);
+  goal_state_.object_ids.push_back(
+    -1); // This state should never be generated during the search
+  goal_state_.object_poses.push_back(fake_pose);
+
+  // debugging
+  // // Pose p1( 0.509746, 0.039520, 0.298403);
+  // // Pose p2( 0.550498, -0.348341, 5.665042);
+  // Pose p3( 0.355350, -0.002500, 5.472355);
+  // Pose p4( 0.139923, -0.028259, 3.270873);
+  // Pose p5( -0.137201, -0.057090, 5.188886);
+  // // poses.push_back(p1);
+  // // poses.push_back(p2);
+  // start_state_.object_poses.push_back(p3);
+  // start_state_.object_poses.push_back(p4);
+  // start_state_.object_poses.push_back(p5);
+  // // start_state_.object_ids.push_back(0);
+  // // start_state_.object_ids.push_back(1);
+  // start_state_.object_ids.push_back(2);
+  // start_state_.object_ids.push_back(3);
+  // start_state_.object_ids.push_back(4);
+
+
+  env_params_.goal_state_id = StateToStateID(goal_state_);
+  env_params_.start_state_id = StateToStateID(
+                                 start_state_); // Start state is the empty state
+  minz_map_[env_params_.start_state_id] = 0;
+  maxz_map_[env_params_.start_state_id] = 0;
+
+  // LoadObjFiles(model_files_);
+  // env_params_.num_objects =
+  // env_params_.num_models; // For now assume that number of objects on table is same as number as models
+
+  kinect_simulator_ = SimExample::Ptr(new SimExample(0, argv,
+                                                     env_params_.img_height, env_params_.img_width));
+  scene_ = kinect_simulator_->scene_;
+  observed_cloud_.reset(new PointCloud);
+  observed_organized_cloud_.reset(new PointCloud);
+  downsampled_observed_cloud_.reset(new PointCloud);
+
+  gl_inverse_transform_ <<
+                        0, 0 , -1 , 0,
+                        -1, 0 , 0 , 0,
+                        0, 1 , 0 , 0,
+                        0, 0 , 0 , 1;
+
+  pcl::console::setVerbosityLevel(pcl::console::L_ALWAYS);
+}
+
+EnvObjectRecognition::EnvObjectRecognition(ros::NodeHandle nh, int rank, int numproc) : nh_(nh),
+  use_cloud_cost_(false),
+  max_z_seen_(-1.0),
+  id(rank),
+  num_proc(numproc) {
   ros::NodeHandle private_nh("~");
   private_nh.param("reference_frame", reference_frame_,
                    std::string("/base_link"));
@@ -343,6 +445,402 @@ bool EnvObjectRecognition::StatesEqualOrdered(const State &s1,
   return true;
 }
 
+void EnvObjectRecognition::DebugPrint(State s){
+  std::cout << "DebugPrint" << std::endl;
+  std::cout << "@@@@@@@@@@@@@@@@@@@@@@obj_ids printf for " << id << std::endl;
+  for(std::vector<int>::iterator obj_it = s.object_ids.begin(); obj_it != s.object_ids.end(); obj_it++) {
+   std::cout << *obj_it << std::endl;
+  }
+
+  std::cout << "^^^^^^^^^^^^^^^^^^^^^^disc printf for " << id << std::endl;
+  for(std::vector<DiscPose>::iterator obj_it = s.disc_object_poses.begin(); obj_it != s.disc_object_poses.end(); obj_it++) {
+    std::cout << "x = " << obj_it->x << "\t";
+    std::cout << "y = " << obj_it->y << "\t";
+    std::cout << "theta = " << obj_it->theta << std::endl;
+  }
+
+  std::cout << "***********************pose printf for " << id << std::endl;
+  for(std::vector<Pose>::iterator obj_it = s.object_poses.begin(); obj_it != s.object_poses.end(); obj_it++) {
+    std::cout << "x = " << obj_it->x << "\t";
+    std::cout << "y = " << obj_it->y << "\t";
+    std::cout << "theta = " << obj_it->theta << std::endl;
+  }
+}
+
+void EnvObjectRecognition::DebugPrintArray(SendMsg* s){
+  std::cout << "DebugPrintArray" << std::endl;
+  int i = 0;
+  while(i < sizeof(SendMsg)) {
+   std::cout << *(int*)s << "\t";
+   // if ((i%NUM_MODELS) == 0) std::endl;
+   s = (SendMsg*)((char*)s + 4);
+   i+=4;
+  }
+  std::cout << "\n";
+}
+
+void EnvObjectRecognition::DebugPrintArrayRecv(RecvMsg* s){
+  std::cout << "DebugPrintArray" << std::endl;
+  int i = 0;
+  while(i < sizeof(RecvMsg)) {
+   std::cout << *(int*)s << "\t";
+   // if ((i%NUM_MODELS) == 0) std::endl;
+   s = (RecvMsg*)((char*)s + 4);
+   i+=4;
+  }
+  std::cout << "\n";
+}
+
+void EnvObjectRecognition::SendbufPopulate(SendMsg *sendbuf, State s, State p, int sid, int pid) {
+  int i = 0;
+  // double* temp = (double*)sendbuf;
+
+  // for (i = 0; i < NUM_MODELS*3*2; i++) {
+  //  temp[i] = -1.0;
+  // }
+
+  // int* temp2 = (int*)((double*)sendbuf + NUM_MODELS * 3 * 2);
+  // for(i = 0; i < ((8 * NUM_MODELS )+ 3); i++) {
+  //   temp2[i] = -1;
+  // }
+  // i = 0;
+
+  // memset(sendbuf, 0, sizeof(SendMsg));
+
+
+  for(std::vector<int>::iterator obj_it = s.object_ids.begin(); obj_it != s.object_ids.end(); obj_it++) {
+    sendbuf->source_ids[i++] = *obj_it;
+  }
+  while(i < NUM_MODELS) {
+    sendbuf->source_ids[i++] = -1;
+  }
+
+  // std::cout << "size 0: " << i << std::endl;
+
+  i = 0;
+  for(std::vector<DiscPose>::iterator obj_it = s.disc_object_poses.begin(); obj_it != s.disc_object_poses.end(); obj_it++) {
+    sendbuf->source_disc[i++] = obj_it->x;
+    sendbuf->source_disc[i++] = obj_it->y;
+    sendbuf->source_disc[i++] = obj_it->theta;
+  }
+  while(i < 3*NUM_MODELS) {
+    sendbuf->source_disc[i++] = -1;
+  }
+
+  // std::cout << "size 1: " << i << std::endl;
+
+  i = 0;
+  for(std::vector<Pose>::iterator obj_it = s.object_poses.begin(); obj_it != s.object_poses.end(); obj_it++) {
+    sendbuf->source_pose[i++] = obj_it->x;
+    sendbuf->source_pose[i++] = obj_it->y;
+    sendbuf->source_pose[i++] = obj_it->theta;
+  }
+  while(i < 3*NUM_MODELS) {
+    sendbuf->source_pose[i++] = -1.0;
+  }
+
+  // std::cout << "size 2: " << i << std::endl;
+
+  i = 0;
+  for(std::vector<int>::iterator obj_it = p.object_ids.begin(); obj_it != p.object_ids.end(); obj_it++) {
+    sendbuf->cand_ids[i++] = *obj_it;
+  }
+  while(i < NUM_MODELS) {
+    sendbuf->cand_ids[i++] = -1;
+  }
+
+  // std::cout << "size 3: " << i << std::endl;
+
+  i = 0;
+  for(std::vector<DiscPose>::iterator obj_it = p.disc_object_poses.begin(); obj_it != p.disc_object_poses.end(); obj_it++) {
+    sendbuf->cand_disc[i++] = obj_it->x;
+    sendbuf->cand_disc[i++] = obj_it->y;
+    sendbuf->cand_disc[i++] = obj_it->theta;
+  }
+  while(i < 3*NUM_MODELS) {
+    sendbuf->cand_disc[i++] = -1;
+  }
+
+  // std::cout << "size 4: " << i << std::endl;
+
+  i = 0;
+  for(std::vector<Pose>::iterator obj_it = p.object_poses.begin(); obj_it != p.object_poses.end(); obj_it++) {
+    sendbuf->cand_pose[i++] = obj_it->x;
+    sendbuf->cand_pose[i++] = obj_it->y;
+    sendbuf->cand_pose[i++] = obj_it->theta;
+  }
+  while(i < 3*NUM_MODELS) {
+    sendbuf->cand_pose[i++] = -1.0;
+  }
+
+  // std::cout << "size 5: " << i << std::endl;
+
+  sendbuf->source_id = sid;
+  sendbuf->cand_id = pid;
+  sendbuf->valid = 1;
+}
+
+int EnvObjectRecognition::ExpectedCountScatter(int *expected) {
+  int val = 0;
+  // std::cout << "Proc: " << id << "reached ExpectedCountScatter" << std::endl;
+  MPI_Scatter(expected, 1, MPI_INT, &val, 1, MPI_INT, 0, MPI_COMM_WORLD);
+  assert(val > 0);
+  // std::cout << "Proc: " << id << "left ExpectedCountScatter" << std::endl;
+  return val;
+}
+
+void EnvObjectRecognition::DataScatter(SendMsg* sendbuf, SendMsg* getbuf, int expected_count) {
+  int nitems = 9;
+  int blocklengths[9] = {NUM_MODELS, NUM_MODELS*3, NUM_MODELS*3,
+                        NUM_MODELS, NUM_MODELS*3, NUM_MODELS*3,
+                        1, 1, 1};
+  MPI_Datatype types[9] = {MPI_INT, MPI_INT, MPI_DOUBLE, MPI_INT, MPI_INT, MPI_DOUBLE,
+                            MPI_INT, MPI_INT, MPI_INT};
+
+  MPI_Datatype mpi_sendbuf;
+  MPI_Aint offset[9];
+  offset[0] = offsetof(SendMsg, source_ids);
+  offset[1] = offsetof(SendMsg, source_disc);
+  offset[2] = offsetof(SendMsg, source_pose);
+  offset[3] = offsetof(SendMsg, cand_ids);
+  offset[4] = offsetof(SendMsg, cand_disc);
+  offset[5] = offsetof(SendMsg, cand_pose);
+  offset[6] = offsetof(SendMsg, source_id);
+  offset[7] = offsetof(SendMsg, cand_id);
+  offset[8] = offsetof(SendMsg, valid);
+
+  MPI_Type_create_struct(nitems, blocklengths, offset, types, &mpi_sendbuf);
+  MPI_Type_commit(&mpi_sendbuf);
+  // std::cout << "Proc: " << id << "going to Scatter" << std::endl;
+  MPI_Scatter(sendbuf, expected_count, mpi_sendbuf, 
+                getbuf, expected_count, mpi_sendbuf, 0, MPI_COMM_WORLD);
+  // std::cout << "Proc: " << id << "left Scatter" << std::endl;
+
+}
+
+int EnvObjectRecognition::GetRecvdState(State *work_source_state, 
+                                          State *work_cand_succs,
+                                          int *work_source_id,
+                                          int *work_cand_id,
+                                          SendMsg* dummy,
+                                          int val) {
+  int count = 0;
+  // std::cout << "Proc: " << id << "reached start of GetRecvdState" << std::endl;
+  for (int i = 0; i < val; i++) {
+    // DebugPrintArray(dummy);
+    
+    if(dummy[i].valid == 1){
+      count++;
+      for(int j = 0; j < NUM_MODELS; j++){
+        if( (dummy[i].source_ids)[j] != -1){
+          int int_add = (dummy[i].source_ids)[j];
+          work_source_state[i].object_ids.push_back(int_add);
+        }
+      }
+
+      // std::cout << i << " : " << val << std::endl;
+      // std::cout << "Proc: " << id << "reached start of GetRecvdState 1" << std::endl;
+
+      int j;
+      for(int k = 0; k < NUM_MODELS; k++){
+        j = k * 3;
+        if( (dummy[i].source_disc)[j] != -1){
+          DiscPose disc(0, 0, 0);
+          // std::cout << "Proc: " << id << "reached start of GetRecvdState k1" << std::endl;
+          disc.x = (dummy[i].source_disc)[j++];
+          // std::cout << "Proc: " << id << "reached start of GetRecvdState k2" << std::endl;
+          disc.y = (dummy[i].source_disc)[j++];
+          // std::cout << "Proc: " << id << "reached start of GetRecvdState k3" << std::endl;
+          disc.theta = (dummy[i].source_disc)[j++];
+          // std::cout << "Proc: " << id << "reached start of GetRecvdState k4" << std::endl;
+          work_source_state[i].disc_object_poses.push_back(disc);
+        }
+      }
+
+      // std::cout << "Proc: " << id << "reached start of GetRecvdState 2" << std::endl;
+
+      j = 0;
+      for(int k = 0; k < NUM_MODELS; k++){
+        j = k * 3;
+        if( (dummy[i].source_pose)[j] != -1.0){
+          Pose pose;
+          // std::cout << "Proc: " << id << "reached start of GetRecvdState k5" << std::endl;
+          pose.x = (dummy[i].source_pose)[j++];
+          pose.y = (dummy[i].source_pose)[j++];
+          pose.theta = (dummy[i].source_pose)[j++];
+          work_source_state[i].object_poses.push_back(pose);
+        }
+      }
+
+      // std::cout << "Proc: " << id << "reached start of GetRecvdState 3" << std::endl;
+
+      //cand
+
+      // DebugPrintArray(&dummy[i]);
+
+      for(int j = 0; j < NUM_MODELS; j++){
+        if( (dummy[i].cand_ids)[j] != -1){
+          int id_add = (dummy[i].cand_ids)[j];
+          // std::cout << "Proc: " << id << "reached start of GetRecvdState k6: " << id_add << std::endl;
+          work_cand_succs[i].object_ids.push_back(id_add);
+          // std::cout << "Proc: " << id << "reached end of GetRecvdState k6" << std::endl;
+        }
+      }
+
+      // std::cout << "Proc: " << id << "reached start of GetRecvdState 4" << std::endl;
+
+      for(int k = 0; k < NUM_MODELS; k++){
+        j = k * 3;
+        if( (dummy[i].cand_disc)[j] != -1){
+          DiscPose disc(0, 0, 0);
+          // std::cout << "Proc: " << id << "reached start of GetRecvdState k7" << std::endl;
+          disc.x = (dummy[i].cand_disc)[j++];
+          disc.y = (dummy[i].cand_disc)[j++];
+          disc.theta = (dummy[i].cand_disc)[j++];
+          work_cand_succs[i].disc_object_poses.push_back(disc);
+        }
+      }
+
+      // std::cout << "Proc: " << id << "reached start of GetRecvdState 5" << std::endl;
+
+      j = 0;
+      for(int k = 0; k < NUM_MODELS; k++){
+        j = k * 3;
+        if( (dummy[i].cand_pose)[j] != -1.0){
+          Pose pose(0, 0, 0);
+          // std::cout << "Proc: " << id << "reached start of GetRecvdState k8" << std::endl;
+          pose.x = (dummy[i].cand_pose)[j++];
+          pose.y = (dummy[i].cand_pose)[j++];
+          pose.theta = (dummy[i].cand_pose)[j++];
+          // std::cout << "Proc: " << id << "going to push_back GetRecvdState k8" << std::endl;
+          work_cand_succs[i].object_poses.push_back(pose);
+        }
+      }
+
+      // std::cout << "Proc: " << id << "reached start of GetRecvdState 6" << std::endl;
+
+      work_source_id[i] = dummy[i].source_id;
+      work_cand_id[i] = dummy[i].cand_id;
+    }
+  }
+
+  // std::cout << "Proc: " << id << "left GetRecvdState with " << count << std::endl;
+
+  return count;
+}
+
+void EnvObjectRecognition::RecvbufPopulate(RecvMsg* sendbuf, 
+                                            State& s,
+                                            StateProperties& child_properties,
+                                            int cost) {
+
+  int i = 0;
+  for(std::vector<int>::iterator obj_it = s.object_ids.begin(); obj_it != s.object_ids.end(); obj_it++) {
+    sendbuf->child_ids[i++] = *obj_it;
+  }
+  while(i < NUM_MODELS) {
+    sendbuf->child_ids[i++] = -1;
+  }
+
+  i = 0;
+  for(std::vector<DiscPose>::iterator obj_it = s.disc_object_poses.begin(); obj_it != s.disc_object_poses.end(); obj_it++) {
+    sendbuf->child_disc[i++] = obj_it->x;
+    sendbuf->child_disc[i++] = obj_it->y;
+    sendbuf->child_disc[i++] = obj_it->theta;
+  }
+  while(i < 3*NUM_MODELS) {
+    sendbuf->child_disc[i++] = -1;
+  }
+
+  i = 0;
+  for(std::vector<Pose>::iterator obj_it = s.object_poses.begin(); obj_it != s.object_poses.end(); obj_it++) {
+    sendbuf->child_pose[i++] = obj_it->x;
+    sendbuf->child_pose[i++] = obj_it->y;
+    sendbuf->child_pose[i++] = obj_it->theta;
+  }
+  while(i < 3*NUM_MODELS) {
+    sendbuf->child_pose[i++] = -1.0;
+  }
+
+  sendbuf->last_min_depth = child_properties.last_min_depth;
+  sendbuf->last_max_depth = child_properties.last_max_depth;
+  sendbuf->cost = cost;
+  sendbuf->valid = 1;
+
+}
+
+void EnvObjectRecognition::DataGather(RecvMsg* recvbuf, RecvMsg* getresult, int expected_count) {
+  int nitems = 7;
+  int blocklengths[7] = {NUM_MODELS, NUM_MODELS*3, NUM_MODELS*3, 1, 1, 1, 1};
+  MPI_Datatype types[7] = {MPI_INT, MPI_INT, MPI_DOUBLE, MPI_UNSIGNED_SHORT,
+                            MPI_UNSIGNED_SHORT, MPI_INT, MPI_INT};
+
+  MPI_Datatype mpi_recvbuf;
+  MPI_Aint offset[7];
+  offset[0] = offsetof(RecvMsg, child_ids);
+  offset[1] = offsetof(RecvMsg, child_disc);
+  offset[2] = offsetof(RecvMsg, child_pose);
+  offset[3] = offsetof(RecvMsg, last_min_depth);
+  offset[4] = offsetof(RecvMsg, last_max_depth);
+  offset[5] = offsetof(RecvMsg, cost);
+  offset[6] = offsetof(RecvMsg, valid);
+
+  MPI_Type_create_struct(nitems, blocklengths, offset, types, &mpi_recvbuf);
+  MPI_Type_commit(&mpi_recvbuf);
+  MPI_Gather(recvbuf, expected_count, mpi_recvbuf, 
+                getresult, expected_count, mpi_recvbuf, 0, MPI_COMM_WORLD);
+}
+
+int EnvObjectRecognition::GetRecvdResult(State *work_source_state, 
+                                          StateProperties *child_properties_result,
+                                          int *cost_result,
+                                          RecvMsg* dummy,
+                                          int tot) {
+  int count = 0;
+  for (int i = 0; i < tot; i++) {
+
+    if(dummy[i].valid == 1){
+      count++;
+      for(int j = 0; j < NUM_MODELS; j++){
+        if( (dummy[i].child_ids)[j] != -1){
+          work_source_state[i].object_ids.push_back( (dummy[i].child_ids)[j] );
+        }
+      }
+
+      int j;
+      for(int k = 0; k < NUM_MODELS; k++){
+        j = k * 3;
+        if( (dummy[i].child_disc)[j] != -1){
+          DiscPose disc(0, 0, 0);
+          disc.x = (dummy[i].child_disc)[j++];
+          disc.y = (dummy[i].child_disc)[j++];
+          disc.theta = (dummy[i].child_disc)[j++];
+          work_source_state[i].disc_object_poses.push_back(disc);
+        }
+      }
+
+      j = 0;
+      for(int k = 0; k < NUM_MODELS; k++){
+        j = k * 3;
+        if( (dummy[i].child_pose)[j] != -1.0){
+          Pose pose(0, 0, 0);
+          pose.x = (dummy[i].child_pose)[j++];
+          pose.y = (dummy[i].child_pose)[j++];
+          pose.theta = (dummy[i].child_pose)[j++];
+          work_source_state[i].object_poses.push_back(pose);
+        }
+      }
+
+      child_properties_result[i].last_min_depth = dummy[i].last_min_depth;
+      child_properties_result[i].last_max_depth = dummy[i].last_max_depth;
+
+      cost_result[i] = dummy[i].cost;
+    }
+  }
+
+  return count;
+}
+
 void EnvObjectRecognition::GetSuccs(int source_state_id,
                                     vector<int> *succ_ids, vector<int> *costs) {
   succ_ids->clear();
@@ -424,38 +922,156 @@ void EnvObjectRecognition::GetSuccs(int source_state_id,
     }
   }
 
+  
+  // Awesome work starts
+
+  // int number = 3343;
+  // MPI_Send(&number, 1, MPI_INT, 1, 0, MPI_COMM_WORLD);
+
+  // std::cout << "Proc: " << id << " reached start of awesome code" << std::endl;
+  int next_multiple = candidate_succ_ids.size() + num_proc - (candidate_succ_ids.size() % num_proc);
+  SendMsg* sendbuf = (SendMsg*) malloc(next_multiple * sizeof(SendMsg));
+  for (int i = candidate_succ_ids.size(); i < next_multiple; i++)
+    sendbuf[i].valid = -1;
+  SendMsg* tempbuf = sendbuf;
+
+  //populate sendbuf buffer
+  for (size_t ii = 0; ii < candidate_succ_ids.size(); ++ii) {
+    // DebugPrint(candidate_succs[ii]);
+    SendbufPopulate(tempbuf, source_state, candidate_succs[ii], 
+                              source_state_id, candidate_succ_ids[ii]);
+    // if (ii < 8) {
+    //   DebugPrint(candidate_succs[ii]);
+    //   DebugPrintArray(tempbuf);
+    // }
+    tempbuf++;
+  }
+
+  //count array so workers can allocate appropriately
+  int* expected_count = (int *) malloc(num_proc * sizeof(int));
+  int val = next_multiple / num_proc;
+  assert((next_multiple % num_proc) == 0);
+
+  for (int i = 0; i < num_proc; i++)
+    expected_count[i] = val;
+
+  // std::cout << "Proc: " << id << "populated buffer to send " << val << std::endl;
+
+  // Till now master only executes
+
+  //expected_count_scatter
+  ExpectedCountScatter(expected_count);
+  free(expected_count);
+
+  SendMsg* dummy = (SendMsg*) malloc(val * sizeof(SendMsg));
+  DataScatter(sendbuf, dummy, val);
+  // std::cout << "Proc: " << id << "printing " << std::endl;
+  // DebugPrintArray(dummy);
+
+  free(sendbuf);
+  
+  State* work_source_state = new State[val];
+
+  // State* work_cand_succs = (State*) malloc(val * sizeof(State));
+  State* work_cand_succs = new State[val];
+
+  int* work_source_id = (int *) malloc(val * sizeof(int));
+  int* work_cand_id = (int *) malloc(val * sizeof(int));
+
+  int count = GetRecvdState(work_source_state, work_cand_succs,
+                work_source_id, work_cand_id, dummy, val);
+
+  // MPI_Barrier(MPI_COMM_WORLD);
+  // std::cout << "proc "<< id <<": reached MPI_Barrier" << std::endl;
+  free(dummy);
+
+  // std::cout << "proc "<< id <<": reached MPI_Barrier" << std::endl;
+
+  State* adjusted_child_state = new State[val];
+  StateProperties* child_properties = new StateProperties[val];
+  int* cost = (int *) malloc(val * sizeof(int));
+
+  for (int ii = 0; ii < count; ii++) {
+    cost[ii] = GetTrueCost(work_source_state[ii], 
+                            work_cand_succs[ii],
+                            work_source_id[ii],
+                            work_cand_id[ii],
+                            &adjusted_child_state[ii],
+                            &child_properties[ii]);
+  }
+
+  // workers result buf
+  RecvMsg* recvbuf = (RecvMsg*) malloc(val * sizeof(RecvMsg));
+  for (int i = 0; i < val; i++)
+    recvbuf[i].valid = -1;
+
+  RecvMsg* recvtemp = recvbuf;
+
+  for (size_t ii = 0; ii < count; ++ii) {
+    RecvbufPopulate(recvtemp, adjusted_child_state[ii], child_properties[ii], cost[ii]);
+    // DebugPrintArrayRecv(recvtemp);
+    recvtemp++;
+  }
+
+  // std::cout << "proc "<< id <<": done RecvbufPopulate" << std::endl;
+
+  // delete adjusted_child_state;
+  // delete child_properties;
+  // delete cost;
+
+  RecvMsg* getresult = (RecvMsg*) malloc(next_multiple * sizeof(RecvMsg));
+  // std::cout << "val: " << val << "next_multiple: " << next_multiple << std::endl;
+  
+  DataGather(recvbuf, getresult, val);
+  // std::cout << "proc "<< id <<": done DataGather" << std::endl;
+
+  free(recvbuf);
+
+  State* child_result = new State[candidate_succ_ids.size()];
+  StateProperties* child_properties_result = new StateProperties[candidate_succ_ids.size()];
+
+  // State* child_result = (State*) malloc(candidate_succ_ids.size() * sizeof(State));
+  // StateProperties* child_properties_result = 
+  //                     (StateProperties*) malloc(candidate_succ_ids.size() * sizeof(StateProperties));
+  int* cost_result = (int *) malloc(candidate_succ_ids.size() * sizeof(int));
+
+  GetRecvdResult(child_result, 
+                child_properties_result,
+                cost_result,
+                getresult,
+                candidate_succ_ids.size());
+  // std::cout << "proc "<< id <<": done GetRecvdResult" << std::endl;
+
+
   //---- PARALLELIZE THIS LOOP-----------//
   for (size_t ii = 0; ii < candidate_succ_ids.size(); ++ii) {
-    State adjusted_child_state;
-    StateProperties child_properties;
-    int cost = GetTrueCost(source_state, candidate_succs[ii], source_state_id,
-                           candidate_succ_ids[ii],
-                           &adjusted_child_state, &child_properties);
 
-    minz_map_[candidate_succ_ids[ii]] = child_properties.last_min_depth;
-    maxz_map_[candidate_succ_ids[ii]] = child_properties.last_max_depth;
+    minz_map_[candidate_succ_ids[ii]] = child_properties_result[ii].last_min_depth;
+    maxz_map_[candidate_succ_ids[ii]] = child_properties_result[ii].last_max_depth;
 
     for (auto it = StateMap.begin(); it != StateMap.end(); ++it) {
       if (it->first == candidate_succ_ids[ii]) {
         continue;  // This is the original state
       }
 
-      if (StatesEqual(adjusted_child_state, it->second)) {
-        cost = -1;
+      if (StatesEqual(child_result[ii], it->second)) {
+        cost_result[ii] = -1;
         break;
       }
     }
 
-    if (cost != -1) {
-      StateMap[candidate_succ_ids[ii]] = adjusted_child_state;
+    if (cost_result[ii] != -1) {
+      StateMap[candidate_succ_ids[ii]] = child_result[ii];
     }
 
-    candidate_costs.push_back(cost);
+    candidate_costs.push_back(cost_result[ii]);
   }
 
-  MPI_Barrier(MPI_COMM_WORLD);
+  // MPI_Barrier(MPI_COMM_WORLD);
 
   //--------------------------------------//
+
+  // Awesome work ends
 
   for (size_t ii = 0; ii < candidate_succ_ids.size(); ++ii) {
     if (candidate_costs[ii] == -1) {
