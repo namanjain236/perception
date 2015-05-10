@@ -35,6 +35,7 @@
 #include <boost/lexical_cast.hpp>
 #include <mpi.h>
 #include <assert.h>
+#include <cilk/cilk.h>
 
 
 using namespace std;
@@ -936,16 +937,21 @@ void EnvObjectRecognition::GetSuccs(int source_state_id,
   SendMsg* tempbuf = sendbuf;
 
   //populate sendbuf buffer
-  for (size_t ii = 0; ii < candidate_succ_ids.size(); ++ii) {
-    DebugPrint(candidate_succs[ii]);
-    SendbufPopulate(tempbuf, source_state, candidate_succs[ii], 
-                              source_state_id, candidate_succ_ids[ii]);
+
+  int sz = candidate_succ_ids.size();
+  
+  #pragma omp parallel for
+  for(unsigned int ii = 0; ii < sz; ++ii)
+    SendbufPopulate(&tempbuf[ii], source_state, candidate_succs[ii], source_state_id, candidate_succ_ids[ii]);
+
+  // {
+    // DebugPrint(candidate_succs[ii]);
     // if (ii < 8) {
     //   DebugPrint(candidate_succs[ii]);
     //   DebugPrintArray(tempbuf);
     // }
-    tempbuf++;
-  }
+  //   tempbuf++;
+  // }
 
   //count array so workers can allocate appropriately
   int* expected_count = (int *) malloc(num_proc * sizeof(int));
@@ -1008,11 +1014,11 @@ void EnvObjectRecognition::GetSuccs(int source_state_id,
 
   RecvMsg* recvtemp = recvbuf;
 
-  for (size_t ii = 0; ii < count; ++ii) {
-    RecvbufPopulate(recvtemp, adjusted_child_state[ii], child_properties[ii], cost[ii]);
-    DebugPrintArrayRecv(recvtemp);
-    recvtemp++;
-  }
+  // #pragma omp parallel for
+  for (size_t ii = 0; ii < count; ++ii)
+    RecvbufPopulate(&recvtemp[ii], adjusted_child_state[ii], child_properties[ii], cost[ii]);
+    // DebugPrintArrayRecv(recvtemp);
+    // recvtemp++;
 
   std::cout << "proc "<< id <<": done RecvbufPopulate" << std::endl;
 
