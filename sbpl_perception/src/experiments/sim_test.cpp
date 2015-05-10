@@ -200,6 +200,8 @@ int main(int argc, char **argv) {
   env_obj->SetObservation(model_ids, poses);
   // env_obj->PrecomputeHeuristics();
 
+  MPI_Barrier(MPI_COMM_WORLD);
+
 
   
   //-------------------------------------------------------------------//

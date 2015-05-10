@@ -611,10 +611,10 @@ void EnvObjectRecognition::DataScatter(SendMsg* sendbuf, SendMsg* getbuf, int ex
 
   MPI_Type_create_struct(nitems, blocklengths, offset, types, &mpi_sendbuf);
   MPI_Type_commit(&mpi_sendbuf);
-  // std::cout << "Proc: " << id << "going to Scatter" << std::endl;
+  std::cout << "Proc: " << id << "going to Scatter" << std::endl;
   MPI_Scatter(sendbuf, expected_count, mpi_sendbuf, 
                 getbuf, expected_count, mpi_sendbuf, 0, MPI_COMM_WORLD);
-  // std::cout << "Proc: " << id << "left Scatter" << std::endl;
+  std::cout << "Proc: " << id << "left Scatter" << std::endl;
 
 }
 
@@ -625,7 +625,7 @@ int EnvObjectRecognition::GetRecvdState(State *work_source_state,
                                           SendMsg* dummy,
                                           int val) {
   int count = 0;
-  // std::cout << "Proc: " << id << "reached start of GetRecvdState" << std::endl;
+  std::cout << "Proc: " << id << "reached start of GetRecvdState" << std::endl;
   for (int i = 0; i < val; i++) {
     // DebugPrintArray(dummy);
     
@@ -937,7 +937,7 @@ void EnvObjectRecognition::GetSuccs(int source_state_id,
 
   //populate sendbuf buffer
   for (size_t ii = 0; ii < candidate_succ_ids.size(); ++ii) {
-    // DebugPrint(candidate_succs[ii]);
+    DebugPrint(candidate_succs[ii]);
     SendbufPopulate(tempbuf, source_state, candidate_succs[ii], 
                               source_state_id, candidate_succ_ids[ii]);
     // if (ii < 8) {
@@ -949,13 +949,14 @@ void EnvObjectRecognition::GetSuccs(int source_state_id,
 
   //count array so workers can allocate appropriately
   int* expected_count = (int *) malloc(num_proc * sizeof(int));
+  //split per processor
   int val = next_multiple / num_proc;
   assert((next_multiple % num_proc) == 0);
 
   for (int i = 0; i < num_proc; i++)
     expected_count[i] = val;
 
-  // std::cout << "Proc: " << id << "populated buffer to send " << val << std::endl;
+  std::cout << "Proc: " << id << "populated buffer to send " << val << std::endl;
 
   // Till now master only executes
 
@@ -965,7 +966,7 @@ void EnvObjectRecognition::GetSuccs(int source_state_id,
 
   SendMsg* dummy = (SendMsg*) malloc(val * sizeof(SendMsg));
   DataScatter(sendbuf, dummy, val);
-  // std::cout << "Proc: " << id << "printing " << std::endl;
+  std::cout << "Proc: " << id << "printing " << std::endl;
   // DebugPrintArray(dummy);
 
   free(sendbuf);
@@ -1009,30 +1010,27 @@ void EnvObjectRecognition::GetSuccs(int source_state_id,
 
   for (size_t ii = 0; ii < count; ++ii) {
     RecvbufPopulate(recvtemp, adjusted_child_state[ii], child_properties[ii], cost[ii]);
-    // DebugPrintArrayRecv(recvtemp);
+    DebugPrintArrayRecv(recvtemp);
     recvtemp++;
   }
 
-  // std::cout << "proc "<< id <<": done RecvbufPopulate" << std::endl;
+  std::cout << "proc "<< id <<": done RecvbufPopulate" << std::endl;
 
   // delete adjusted_child_state;
   // delete child_properties;
   // delete cost;
 
   RecvMsg* getresult = (RecvMsg*) malloc(next_multiple * sizeof(RecvMsg));
-  // std::cout << "val: " << val << "next_multiple: " << next_multiple << std::endl;
+  std::cout << "val: " << val << "next_multiple: " << next_multiple << std::endl;
   
   DataGather(recvbuf, getresult, val);
-  // std::cout << "proc "<< id <<": done DataGather" << std::endl;
+  std::cout << "proc "<< id <<": done DataGather" << std::endl;
 
   free(recvbuf);
 
   State* child_result = new State[candidate_succ_ids.size()];
   StateProperties* child_properties_result = new StateProperties[candidate_succ_ids.size()];
 
-  // State* child_result = (State*) malloc(candidate_succ_ids.size() * sizeof(State));
-  // StateProperties* child_properties_result = 
-  //                     (StateProperties*) malloc(candidate_succ_ids.size() * sizeof(StateProperties));
   int* cost_result = (int *) malloc(candidate_succ_ids.size() * sizeof(int));
 
   GetRecvdResult(child_result, 
@@ -1040,7 +1038,7 @@ void EnvObjectRecognition::GetSuccs(int source_state_id,
                 cost_result,
                 getresult,
                 candidate_succ_ids.size());
-  // std::cout << "proc "<< id <<": done GetRecvdResult" << std::endl;
+  std::cout << "proc "<< id <<": done GetRecvdResult" << std::endl;
 
 
   //---- PARALLELIZE THIS LOOP-----------//
