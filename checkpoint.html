@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en-us">
+  <head>
+    <meta charset="UTF-8">
+    <title>15-618 Project</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <link rel="stylesheet" type="text/css" href="stylesheets/normalize.css" media="screen">
+    <script src="https://google-code-prettify.googlecode.com/svn/loader/run_prettify.js"></script>
+    <link href='http://fonts.googleapis.com/css?family=Open+Sans:400,700' rel='stylesheet' type='text/css'>
+    <link rel="stylesheet" type="text/css" href="stylesheets/stylesheet.css" media="screen">
+    <link rel="stylesheet" type="text/css" href="stylesheets/github-light.css" media="screen">
+  </head>
+  <body>
+    <section class="page-header">
+      <h1 class="project-name">Parallel Rendering of Multiple Depth Images</h1>
+      <h2 class="project-tagline">Naman Jain & Vinay Venkatesh</h2>
+      <h2 class="project-tagline">
+        <b><a href="proposal.html">Project Proposal</a></b>
+        <span> > </span>
+        <b><a href="#checkpoint">Project Checkpoint</a></b>
+        <span> > </span>
+        <b><a href="index.html">Final Writeup</a></b></h2>
+    </section>
+
+    <section class="main-content">
+
+<h3><center><a id="checkpoint" class="anchor" href="#checkpoint" aria-hidden="true"><span class="octicon octicon-link"></span></a><b>Project Checkpoint</b></center></h3>
+
+<h3><a id="checkpoint-work" class="anchor" aria-hidden="true"><span class="octicon octicon-link"></span></a>Work Completed:</h3>
+
+<p>During the first week, we got the setup to run ROS which is well supported on Ubuntu. While trying to run the starter code, we faced issues with the OpenGL version supported on our system. Later we figured out that VMware lacks support for OpenGL 2.1+, though the local system does support version 4+. So we decided to dual-boot our system, to have a local test setup. We also have collected some test data-sets from kinect with which we can test our system during the later phases of the project.</p>
+
+<p>In the second week, we spent a considerable amount of time understanding the code base and then we went on to profile the computationally intensive sections of the code i.e. the part of the code which gets all the possible successors and renders each one of the them to compute the cost. Only successors having cost within the specified threshold are further included in our search. The reason behind profiling is to know if there is enough computational intensity involved to go with multiple GPUs. Currently, with 1 object, the computation of cost associated with poses take an average of 64ms and takes about an average of 134ms with 3 objects. The graph below shows the plot of the time spent in rendering and computing different poses of objects when we include 1, 2 and 3 objects at a time respectively.
+The space dimensions used in the run was: <code>x,y: (-0.3, 0.3)</code> in steps of 0.2 and theta, <code>(0, 2*pi)</code> in steps of <code>(pi/8)</code>.
+ </p>
+
+<!-- <pre><code>$ cd your_repo_root/repo_name
+$ git fetch origin
+$ git checkout gh-pages
+</code></pre> -->
+
+<h3><a id="checkpoint-goals" class="anchor" aria-hidden="true"><span class="octicon octicon-link"></span></a>Goals and Deliverables:</h3>
+
+<p>We have identified potential regions that can be parallelized and are working towards achieving it, especially the case of computing multiple poses in parallel as mentioned in the proposal. However, this involves inherent dependencies that have to be removed to make the data set independent to fully utilize the parallelism involved. Also, we will go about expanding our data set to involve more objects and bring about their rendering and computation.</p>
+ 
+<p>We later plan to work on rendering of multiple objects parallels using OpenGL. Currently, we will have to research further on doing this to identify any concerns in regards to that. We can provide statistics in the form of graphs to show the sufficient speedup obtained for the parallelism competition.
+ </p>
+
+<h3>
+
+<p>
+<img border="0" src="data/checkpoint.png" width="900" height="392">
+</p>
+
+<h3><a id="checkpoint-sched" class="anchor" aria-hidden="true"><span class="octicon octicon-link"></span></a>Schedule:</h3>
+
+<style type="text/css">
+.tg  {border-collapse:collapse;border-spacing:0;}
+.tg td{font-family:Arial, sans-serif;font-size:14px;padding:10px 5px;border-style:solid;border-width:1px;overflow:hidden;word-break:normal;}
+.tg th{font-family:Arial, sans-serif;font-size:14px;font-weight:normal;padding:10px 5px;border-style:solid;border-width:1px;overflow:hidden;word-break:normal;}
+</style>
+
+<style type="text/css">
+.tg  {border-collapse:collapse;border-spacing:0;}
+.tg td{font-family:Arial, sans-serif;font-size:14px;padding:10px 5px;border-style:solid;border-width:1px;overflow:hidden;word-break:normal;}
+.tg th{font-family:Arial, sans-serif;font-size:14px;font-weight:normal;padding:10px 5px;border-style:solid;border-width:1px;overflow:hidden;word-break:normal;}
+</style>
+<style type="text/css">
+.tg  {border-collapse:collapse;border-spacing:0;}
+.tg td{font-family:Arial, sans-serif;font-size:14px;padding:10px 5px;border-style:solid;border-width:1px;overflow:hidden;word-break:normal;}
+.tg th{font-family:Arial, sans-serif;font-size:14px;font-weight:normal;padding:10px 5px;border-style:solid;border-width:1px;overflow:hidden;word-break:normal;}
+.tg .tg-e3zv{font-weight:bold}
+.tg .tg-bsv2{background-color:#efefef}
+</style>
+<style type="text/css">
+.tg  {border-collapse:collapse;border-spacing:0;}
+.tg td{font-family:Arial, sans-serif;font-size:14px;padding:10px 5px;border-style:solid;border-width:1px;overflow:hidden;word-break:normal;}
+.tg th{font-family:Arial, sans-serif;font-size:14px;font-weight:normal;padding:10px 5px;border-style:solid;border-width:1px;overflow:hidden;word-break:normal;}
+.tg .tg-e3zv{font-weight:bold}
+.tg .tg-bsv2{background-color:#efefef}
+</style>
+<table class="tg" style="undefined;table-layout: fixed; width: 1115px">
+<colgroup>
+<col style="width: 183px">
+<col style="width: 650px">
+</colgroup>
+  <tr>
+    <th class="tg-e3zv">Dates</th>
+    <th class="tg-e3zv">Proposed plan</th>
+  </tr>
+  <tr>
+    <td class="tg-bsv2">3 - 12  April</td>
+    <td class="tg-bsv2">Setup ROS and understand low level implementations of the starter code</td>
+  </tr>
+  <tr>
+    <td class="tg-bsv2">13 - 19 April</td>
+    <td class="tg-bsv2">Work on a small data set and identify dependencies</td>
+  </tr>
+  <tr>
+    <td class="tg-031e">20 - 26 April</td>
+    <td class="tg-031e">There are multiple places, the code could be optimized, we’ll work on that and,parallelize the rendering and computation of multiple poses of a given state.</td>
+  </tr>
+  <tr>
+    <td class="tg-031e">27 - 3 May</td>
+    <td class="tg-031e">Based on the parallelization achieved, we will either render multiple depth images parallely using multiple GPU’s (on AWS) or we’ll only optimize OpenGL to render a few images in parallel.</td>
+  </tr>
+  <tr>
+    <td class="tg-031e">4 - 10 May</td>
+    <td class="tg-031e">Optimize, Fixing bugs, Testing and Final Report.</td>
+  </tr>
+</table>
+
+<script>
+  (function(i,s,o,g,r,a,m){i['GoogleAnalyticsObject']=r;i[r]=i[r]||function(){
+  (i[r].q=i[r].q||[]).push(arguments)},i[r].l=1*new Date();a=s.createElement(o),
+  m=s.getElementsByTagName(o)[0];a.async=1;a.src=g;m.parentNode.insertBefore(a,m)
+  })(window,document,'script','//www.google-analytics.com/analytics.js','ga');
+
+  ga('create', 'UA-62767934-1', 'auto');
+  ga('send', 'pageview');
+
+</script>
+
+  
+  </body>
+</html>
+

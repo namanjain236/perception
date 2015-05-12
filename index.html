@@ -5,6 +5,7 @@
     <title>15-618 Project</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="stylesheet" type="text/css" href="stylesheets/normalize.css" media="screen">
+    <script src="https://google-code-prettify.googlecode.com/svn/loader/run_prettify.js"></script>
     <link href='http://fonts.googleapis.com/css?family=Open+Sans:400,700' rel='stylesheet' type='text/css'>
     <link rel="stylesheet" type="text/css" href="stylesheets/stylesheet.css" media="screen">
     <link rel="stylesheet" type="text/css" href="stylesheets/github-light.css" media="screen">
@@ -14,231 +15,341 @@
       <h1 class="project-name">Parallel Rendering of Multiple Depth Images</h1>
       <h2 class="project-tagline">Naman Jain & Vinay Venkatesh</h2>
       <h2 class="project-tagline">
-        <b><a href="#proposal">Project Proposal</a></b>
+        <b><a href="proposal.html">Project Proposal</a></b>
         <span> > </span>
-        <b><a href="#checkpoint">Project Checkpoint</a></b>
+        <b><a href="checkpoint.html">Project Checkpoint</a></b>
         <span> > </span>
         <b><a href="#writeup">Final Writeup</a></b></h2>
     </section>
 
     <section class="main-content">
 
-<h3><center><a id="writeup" class="anchor" href="#writeup" aria-hidden="true"><span class="octicon octicon-link"></span></a>Project Final Writeup</center></h3>
+<h3><center><a id="writeup" class="anchor" href="#writeup" aria-hidden="true"><span class="octicon octicon-link"></span></a><b>Final Writeup</b></center></h3>
 
+<h3><a class="anchor" aria-hidden="true"><span class="octicon octicon-link"></span></a>Summary:</h3>
 <p>
-<img border="0" src="data/block.png" width="810" height="322">
+We have implemented a parallel algorithm to localize objects in an image using MPI over multiple cores and cluster and have obtained 9x speedup using 32 cores on Intel Xeon E5-2680v2 on AWS.</p>
+
+<p>We intend to prove our results by speedup graphs using variable number of computation units on a single machine and across multiple nodes in a cluster, in comparison with the serial version of the code. Our implementation involved designing a scalable framework across multiple cores on AWS using MPI. We further ported the framework to work across a cluster of nodes on AWS. Further improvisations also include OpenMP within each MPI worker process.</p>
+
+<p>We claim that we cannot put enough compute capability on a robot to exploit a greater degree of parallelism. Hence there is a need to perform the computations offline and send the results back to the robot. Our parallel rendering version has reduced the localization time for an image with 3 objects from about 280 seconds to less than 30 seconds which seems to fit well for the applications intended. </p>
+
+<h3><a class="anchor" aria-hidden="true"><span class="octicon octicon-link"></span></a>Background:</h3>
+<p>
+Our project mainly tries to address the ongoing research on object localization at Carnegie Mellon University, <i>Search Based Planning Laboratory (SBPL)</i>. One of the chief applications of object localization is to enable robots to identify objects in a given scene accurately and efficiently.</p>
+
+<p align="middle">
+<img border="0" src="data/herb.jpg" width="600" height="360">
 </p>
 
+<p>Let's say <i>HERB</i> above wants to pick up the oreo on the plate. He first needs to identify the oreo amongst all the other objects in front of him and also he needs to be able to do this quickly.
+Some of the industrial robotic applications are involved in incorporating this feature to any mobile manipulator that needs to recognize and localize objects like the <!-- <a href="http://amazonpickingchallenge.org/details.shtml"> --><i>Amazon Kiva Robots</i><!-- </a> -->.
+</p>
 
-<h3><center><a id="checkpoint" class="anchor" href="#checkpoint" aria-hidden="true"><span class="octicon octicon-link"></span></a>Project Checkpoint</center></h3>
+<h3><a class="anchor" aria-hidden="true"><span class="octicon octicon-link"></span></a>Baseline Algorithm:</h3>
+<p>
+We use search-based planning algorithm intended to minimize number of 'simulations' based on dynamic program of cost. The state expansions and the algorithm is described below:
+</p>
+<p align="middle">
+<img border="0" src="data/dag.png" width="980" height="260">
+</p>
+<p>
+We have different expansion states represented by a Directed Acyclic Graph. Each node in the graph describes a given configuration of an object (or objects) in the given scene. The search based expansion of the states of the objects follow the pattern:</p>
 
-<h3><a id="checkpoint-work" class="anchor" aria-hidden="true"><span class="octicon octicon-link"></span></a>Work Completed:</h3>
+<ol>
+<li>We start off with an empty image without any objects involved at ground 0.</li>
+<li>We then go on to compute all possible configurations (x, y and theta) of taking 1 object at a time which brings us to Level1 of the search. As seen above, if we have objects A and B, we generate all possible configs of A (A1, A2 …..) and also that of B (B1, B2 ….).</li>
+<li>We combine all the configs of a given level to generate a state for that level which aggregates all the object ids and their respective positions.</li>
+<li>We would compute the cost of each these states and only involve states which fall within the cost threshold for the computations of successive states in the next level.</li>
+<li>Next, we fix a config for one object and go on to involve another object with it and generate all possible configs for these 2 objects. In the figure above, we first fix A1 and involve object B and generate all possible states (A1B1, A1B2, A1B3). Then we do the same fixing for A2, B1 and B2 and so on. This constitutes Level 2.</li>
+<li>Repeat the above algorithm for levels beyond until we have included all the objects and reached our convergence. The animation below shows the different phases of the state expansion algorithm described.</li>
+</ol>
+</p>
 
-<p>During the first week, we got the setup to run ROS which is well supported on Ubuntu. While trying to run the starter code, we faced issues with the OpenGL version supported on our system. Later we figured out that VMware lacks support for OpenGL 2.1+, though the local system does support version 4+. So we decided to dual-boot our system, to have a local test setup. We also have collected some test data-sets from kinect with which we can test our system during the later phases of the project.</p>
+<figure align="middle">
+  <img border="0" src="data/sbpl.gif" width="480" height="360">
+  <figcaption>Animation of state expansion algorithm for 3 objects</figcaption>
+</figure>
 
-<p>In the second week, we spent a considerable amount of time understanding the code base and then we went on to profile the computationally intensive sections of the code i.e. the part of the code which gets all the possible successors and renders each one of the them to compute the cost. Only successors having cost within the specified threshold are further included in our search. The reason behind profiling is to know if there is enough computational intensity involved to go with multiple GPUs. Currently, with 1 object, the computation of cost associated with poses take an average of 64ms and takes about an average of 134ms with 3 objects. The graph below shows the plot of the time spent in rendering and computing different poses of objects when we include 1, 2 and 3 objects at a time respectively.
-The space dimensions used in the run was: x,y: (-0.3, 0.3) in steps of 0.2 and theta, (0, 2*pi) in steps of (pi/8).
- </p>
+<h3><a class="anchor" aria-hidden="true"><span class="octicon octicon-link"></span></a>Input and Output:</h3>
+<p>
+Input to our analysis consists of a depth image taken from a Kinect sensor along with the number of objects in the given input scene and the universal set of 3D models of “all” possible objects in our database. The system analyzes the input image via a graph search algorithm and produces all  orientations of all combinations of the objects in the input image and compares it with the existing database to identify them. The output consists of the identity of each object in the input image and its localized position within the image.</p>
 
-<!-- <pre><code>$ cd your_repo_root/repo_name
-$ git fetch origin
-$ git checkout gh-pages
-</code></pre> -->
+<p>The most computationally intensive part of the algorithm involved rendering an image to calculate the cost metric of each possible configuration of the objects. However, most of this computations is parallelizable though they have dependencies. The algorithm exposes a lot of data level parallelism as the computation at each node can be done independently.
+</p>
 
-<h3><a id="checkpoint-goals" class="anchor" aria-hidden="true"><span class="octicon octicon-link"></span></a>Goals and Deliverables:</h3>
+<h3><a class="anchor" aria-hidden="true"><span class="octicon octicon-link"></span></a>Platform:</h3>
+<p>
+The platform consists of an environment with Robot Operating System (ROS) which is used extensively for compilation and execution. OpenGL and Point Cloud Library (PCL) are used in rendering images. Amazon Web Services (AWS) is used to provide us with the multicore and cluster infrastructure. 
+</p>
 
-<p>We have identified potential regions that can be parallelized and are working towards achieving it, especially the case of computing multiple poses in parallel as mentioned in the proposal. However, this involves inherent dependencies that have to be removed to make the data set independent to fully utilize the parallelism involved. Also, we will go about expanding our data set to involve more objects and bring about their rendering and computation.</p>
- 
-<p>We later plan to work on rendering of multiple objects parallels using OpenGL. Currently, we will have to research further on doing this to identify any concerns in regards to that. We can provide statistics in the form of graphs to show the sufficient speedup obtained for the parallelism competition.
- </p>
+<h3><a class="anchor" aria-hidden="true"><span class="octicon octicon-link"></span></a>Approach:</h3>
+<p>
+Each node in the DAG shown, performs rendering and computes the cost. Cost is the number of pixels of the generated image that are identifiable by the observed image. Lesser the cost, better it is. If the cost lies within a certain threshold, we consider going down the tree or else we ignore that particular configuration.</p>
 
-<h3>
+<p><i>Initial profiling:</i> The code takes a total of 284s to localize an image with 3 objects and out of which time spent on image rendering and computation of cost alone takes 269s for all the nodes. Thus, parallelizing these could result in good performance benefits.</p>
+
+<p>The question now comes is what form of parallelism should we use? We have the following options:</p>
 
 <p>
+<ol>
+<li>
+Within a core:
+<ul>
+<li><i>SIMD:</i> Helpful if repeated arithmetic computations, which is not in our case.</li>
+<li><i>Multi-threading:</i> As we have talked that OpenGL is used for rendering, it does not support or rather no benefit can be obtained when running it from multiple threads.</li>
+</ul>
+</li>
+
+<li>Across cores:
+<ul>
+<li><i>OpenMP:</i> For the same reason that OpenGL context is thread specific, we do not find this feasible.</li>
+<li><i>MPI:</i> Message passing seems most apt as it provides enough flexibility across cores and over the cluster to leverage the parallelism present.</li>
+</ul>
+</li>
+</ol>
+</p>
+
+<p><i>
+Therefore, we decided to parallelize the system with MPI.
+</i></p>
+
+<h3><a class="anchor" aria-hidden="true"><span class="octicon octicon-link"></span></a>System Design:</h3>
+<p>Stating an example of a robot trying to localize a set of objects, it sends the image to the cloud, in our case AWS. We configured AWS to have master and slave configuration, running on multiple cores and cluster configurations with MPI framework. It is expected to run the search algorithm and return the object id with their respective co-ordinates as soon as possible.</p>
+
+<p align="middle">
+<img border="0" src="data/block.png" width="600" height="322">
+</p>
+
+<p>
+But depencies thwart parallelism, some of which we mainly addressed are:
+<ol>
+<li><i>Kd Tree:</i> PCL uses a Kd tree which is shared amongst all the nodes for their cost metric computation. So we made each process creates its local copy of the Kd tree and hence removing its dependency.</li>
+<li><i>Hashmap:</i> A hashmap to reduce the amount of computations was implemented for already computed elements and it is shared by all the nodes. Therefore, in the parallel version we made sure that computations involving hashmap have been de-coupled and is handled only by the master process.</li>
+<li><i>Kinect simulator object:</i> Each image rendering requires an independent kinect simulator object. We handle this by making each process create their own object.</li>
+</ol>
+</p>
+
+<h3><a class="anchor" aria-hidden="true"><span class="octicon octicon-link"></span></a>Work Distribution:</h3>
+<p>Now that dependencies have been removed, we reason about the ways to distribute the work.
+Below is the graph representing execution time for each successor state at different levels. Since at level 1 all images, lets say a mug, a jug and a cup, are rendered in all possible configurations, the rendering time for this large jug could be much larger than the small mug. Therefore, as expected, we see high rendering time initially as it involved the rendering of the large jug. Towards higher successor ids, the rendering time is much lesser as it only has to deal with the rendering of the small cup.</p>
+
+<p align="middle">
 <img border="0" src="data/checkpoint.png" width="900" height="392">
 </p>
 
-<h3><a id="checkpoint-sched" class="anchor" aria-hidden="true"><span class="octicon octicon-link"></span></a>Schedule:</h3>
+<p>Thus, in-order to maintain good load balance, we assign the work to slaves in an <i>interleaved</i> manner.</p>
 
-<style type="text/css">
-.tg  {border-collapse:collapse;border-spacing:0;}
-.tg td{font-family:Arial, sans-serif;font-size:14px;padding:10px 5px;border-style:solid;border-width:1px;overflow:hidden;word-break:normal;}
-.tg th{font-family:Arial, sans-serif;font-size:14px;font-weight:normal;padding:10px 5px;border-style:solid;border-width:1px;overflow:hidden;word-break:normal;}
-</style>
+<h3><a class="anchor" aria-hidden="true"><span class="octicon octicon-link"></span></a>Master-Slave Implementation:</h3>
 
-<style type="text/css">
-.tg  {border-collapse:collapse;border-spacing:0;}
-.tg td{font-family:Arial, sans-serif;font-size:14px;padding:10px 5px;border-style:solid;border-width:1px;overflow:hidden;word-break:normal;}
-.tg th{font-family:Arial, sans-serif;font-size:14px;font-weight:normal;padding:10px 5px;border-style:solid;border-width:1px;overflow:hidden;word-break:normal;}
-</style>
-<style type="text/css">
-.tg  {border-collapse:collapse;border-spacing:0;}
-.tg td{font-family:Arial, sans-serif;font-size:14px;padding:10px 5px;border-style:solid;border-width:1px;overflow:hidden;word-break:normal;}
-.tg th{font-family:Arial, sans-serif;font-size:14px;font-weight:normal;padding:10px 5px;border-style:solid;border-width:1px;overflow:hidden;word-break:normal;}
-.tg .tg-e3zv{font-weight:bold}
-.tg .tg-bsv2{background-color:#efefef}
-</style>
-<style type="text/css">
-.tg  {border-collapse:collapse;border-spacing:0;}
-.tg td{font-family:Arial, sans-serif;font-size:14px;padding:10px 5px;border-style:solid;border-width:1px;overflow:hidden;word-break:normal;}
-.tg th{font-family:Arial, sans-serif;font-size:14px;font-weight:normal;padding:10px 5px;border-style:solid;border-width:1px;overflow:hidden;word-break:normal;}
-.tg .tg-e3zv{font-weight:bold}
-.tg .tg-bsv2{background-color:#efefef}
-</style>
-<table class="tg" style="undefined;table-layout: fixed; width: 1115px">
-<colgroup>
-<col style="width: 183px">
-<col style="width: 650px">
-</colgroup>
-  <tr>
-    <th class="tg-e3zv">Dates</th>
-    <th class="tg-e3zv">Proposed plan</th>
+<p align="middle">
+<img border="0" src="data/master.png" width="640" height="640">
+</p>
+
+<p><b>Master node scatters the dataset to each worker:</b></p>
+
+<pre class="prettyprint">
+/**
+ * [EnvObjectRecognition::DataScatter description] Master node scatters the
+ *                                                 actual data to all workers
+ *
+ * @param sendbuf        [description]             Data buffer used by master
+ *                                                 to send data
+ *
+ * @param getbuf         [description]             Data buffer used by workers
+ *                                                 to receive data
+ *
+ * @param expected_count [description]             size of data sent to each
+ *                                                 client from master
+ */
+void EnvObjectRecognition::DataScatter(SendMsg* sendbuf, SendMsg* getbuf, int expected_count) {
+  //first create a MPI_Datatype as MPI does not support derived data types
+  int nitems = NUM_ELEMS;
+  int blocklengths[NUM_ELEMS] = {NUM_MODELS, NUM_MODELS*3, NUM_MODELS*3,
+                                 NUM_MODELS, NUM_MODELS*3, NUM_MODELS*3, 1, 1, 1};
+  MPI_Datatype types[NUM_ELEMNS] = {MPI_INT, MPI_INT, MPI_DOUBLE, MPI_INT, MPI_INT, MPI_DOUBLE,
+                                    MPI_INT, MPI_INT, MPI_INT};
+
+  MPI_Datatype mpi_sendbuf;
+  MPI_Aint offset[NUM_ELEMS];
+  offset[0] = offsetof(SendMsg, source_ids);
+  offset[1] = offsetof(SendMsg, source_disc);
+  offset[2] = offsetof(SendMsg, source_pose);
+  offset[3] = offsetof(SendMsg, cand_ids);
+  offset[4] = offsetof(SendMsg, cand_disc);
+  offset[5] = offsetof(SendMsg, cand_pose);
+  offset[6] = offsetof(SendMsg, source_id);
+  offset[7] = offsetof(SendMsg, cand_id);
+  offset[8] = offsetof(SendMsg, valid);
+
+  //create the derived data type
+  MPI_Type_create_struct(nitems, blocklengths, offset, types, &mpi_sendbuf);
+  MPI_Type_commit(&mpi_sendbuf);
+
+  //scatter the data
+  MPI_Scatter(sendbuf, expected_count, mpi_sendbuf,
+                getbuf, expected_count, mpi_sendbuf, 0, MPI_COMM_WORLD);
+}</pre>
+
+<p><b>Master node gathers results from workers:</b></p>
+
+<pre class="prettyprint">
+/**
+ * [EnvObjectRecognition::DataGather description] Master node gathers the 
+ *                                                results from all workers
+ *                                                
+ * @param recvbuf        [description]  Buffer each worker uses to send data
+ * @param getresult      [description]  Buffer the master node uses to gather data
+ * @param expected_count [description]  Size of data sent by each worker
+ */
+void EnvObjectRecognition::DataGather(RecvMsg* recvbuf, RecvMsg* getresult, int expected_count) {
+  int nitems = RECV_ELEMS;
+  int blocklengths[RECV_ELEMS] = {NUM_MODELS, NUM_MODELS*3, NUM_MODELS*3, 1, 1, 1, 1};
+  MPI_Datatype types[RECV_ELEMS] = {MPI_INT, MPI_INT, MPI_DOUBLE, MPI_UNSIGNED_SHORT,
+                                    MPI_UNSIGNED_SHORT, MPI_INT, MPI_INT};
+
+  MPI_Datatype mpi_recvbuf;
+  MPI_Aint offset[RECV_ELEMS];
+  offset[0] = offsetof(RecvMsg, child_ids);
+  offset[1] = offsetof(RecvMsg, child_disc);
+  offset[2] = offsetof(RecvMsg, child_pose);
+  offset[3] = offsetof(RecvMsg, last_min_depth);
+  offset[4] = offsetof(RecvMsg, last_max_depth);
+  offset[5] = offsetof(RecvMsg, cost);
+  offset[6] = offsetof(RecvMsg, valid);
+
+  MPI_Type_create_struct(nitems, blocklengths, offset, types, &mpi_recvbuf);
+  MPI_Type_commit(&mpi_recvbuf);
+  MPI_Gather(recvbuf, expected_count, mpi_recvbuf,
+                getresult, expected_count, mpi_recvbuf, 0, MPI_COMM_WORLD);
+}</pre>
+
+
+<h3><a class="anchor" aria-hidden="true"><span class="octicon octicon-link"></span></a>Challenges we faced:</h3>
+<ol>
+<li>ROS which we use extensively for building and running has advantages but requires Ubuntu. Hence we could not use GHC machines and latedays.</li>
+<li>OpenGL version support of 2.0+ is a requirement. It required us a great deal of work to find the right drivers and update the versions to enable it on AWS instances.</li>
+<li>Integrating MPI with ROS, was a non-trivial work. We had a lot of issues with linking library and creating CMakeList file.</li>
+<li>ROS + MPI was also a hindrance when we moved to a cluster. We saw some uncharacteristic behaviors of MPI which required us to store our binary on each of the worker nodes before execution.</li>
+</ol>
+
+<h3><a class="anchor" aria-hidden="true"><span class="octicon octicon-link"></span></a>Result:</h3>
+<p>We ran our implementation on a 32 core Intel Xeon E5-2680v2 on AWS. In the graph below, the X-axis signifies number of cores and Y-axis is the speedup achieved for three datasets having three different images each. As expected we see increase in speedup as more cores are used (max 32 in this case). The reason we do not expect and see a linear speedup is due to the fact that parallelism is only available level-wise. This is done in-order to achieve the merits of dynamic programing involved in the computation of cost.</p> <p>In the initial levels, the candidate size will be low, therefore, lesser parallelism. As we go further go down the DAG, the size of candidates to be rendered increases, therefore higher parallelism could be exploited. </p>
+
+
+
+<p align="middle">
+<img border="0" src="data/mpi.png" width="900" height="440">
+</p>
+
+<h3><a class="anchor" aria-hidden="true"><span class="octicon octicon-link"></span></a>OpenMP:</h3>
+<p>The current master-worker sections of the code computes many iterations. It prepares, sends and receives the data in a derived format, as MPI by default do not support derived data types.  Again, all this data is independent of each other and can be handled separately. A simple way to achieve this was to use the OpenMP framework within each master and worker nodes to parallelize the loops involved in the computations. This did give us appreciable improvement in timing which is recorded below.
+</p>
+
+<pre class="prettyprint">
+#pragma omp parallel for
+  for(unsigned int ii = 0; ii < size; ++ii)
+    SendbufPopulate(&tempbuf[ii], source_state, candidate_succs[ii], source_state_id, candidate_succ_ids[ii]);
+</pre>
+
+<p>We have tabulated the results of running plain MPI and also the MPI implementation with OpenMP.</p>
+
+<table align="center">
+  <tr style="height:0px">
+    <td style="border-left:solid #000000 1px;border-right:solid #000000 1px;border-bottom:solid #000000 1px;border-top:solid #000000 1px;vertical-align:top;padding:7px 7px 7px 7px"><p dir="ltr" style="line-height:1.2;margin-top:0pt;margin-bottom:0pt;text-align: center;"><span id="docs-internal-guid-6ab6555c-456e-3b62-8087-2107963e5e4a"><span style="font-size: 15px; font-family: Calibri; color: rgb(0, 0, 0); font-weight: bold; vertical-align: baseline; white-space: pre-wrap; background-color: transparent;">Number of Cores</span></span></p>
+    </td>
+    <td style="border-left:solid #000000 1px;border-right:solid #000000 1px;border-bottom:solid #000000 1px;border-top:solid #000000 1px;vertical-align:top;padding:7px 7px 7px 7px"><p dir="ltr" style="line-height:1.2;margin-top:0pt;margin-bottom:0pt;text-align: center;"><span id="docs-internal-guid-6ab6555c-456e-3b62-8087-2107963e5e4a"><span style="font-size: 15px; font-family: Calibri; color: rgb(0, 0, 0); font-weight: bold; vertical-align: baseline; white-space: pre-wrap; background-color: transparent;">Plain MPI execution time in seconds</span></span></p>
+    </td>
+    <td style="border-left:solid #000000 1px;border-right:solid #000000 1px;border-bottom:solid #000000 1px;border-top:solid #000000 1px;vertical-align:top;padding:7px 7px 7px 7px"><p dir="ltr" style="line-height:1.2;margin-top:0pt;margin-bottom:0pt;text-align: center;"><span id="docs-internal-guid-6ab6555c-456e-3b62-8087-2107963e5e4a"><span style="font-size: 15px; font-family: Calibri; color: rgb(0, 0, 0); font-weight: bold; vertical-align: baseline; white-space: pre-wrap; background-color: transparent;">OpenMP + MPI execution time in seconds</span></span></p>
+    </td>
   </tr>
-  <tr>
-    <td class="tg-bsv2">3 - 12  April</td>
-    <td class="tg-bsv2">Setup ROS and understand low level implementations of the starter code</td>
+  <tr style="height:0px">
+    <td style="border-left:solid #000000 1px;border-right:solid #000000 1px;border-bottom:solid #000000 1px;border-top:solid #000000 1px;vertical-align:top;padding:7px 7px 7px 7px"><p dir="ltr" style="line-height:1.2;margin-top:0pt;margin-bottom:0pt;text-align: center;"><span id="docs-internal-guid-6ab6555c-456e-3b62-8087-2107963e5e4a"><span style="font-size: 15px; font-family: Calibri; color: rgb(0, 0, 0); vertical-align: baseline; white-space: pre-wrap; background-color: transparent;">1</span></span></p>
+    </td>
+    <td style="border-left:solid #000000 1px;border-right:solid #000000 1px;border-bottom:solid #000000 1px;border-top:solid #000000 1px;vertical-align:top;padding:7px 7px 7px 7px"><p dir="ltr" style="line-height:1.2;margin-top:0pt;margin-bottom:0pt;text-align: center;"><span id="docs-internal-guid-6ab6555c-456e-3b62-8087-2107963e5e4a"><span style="font-size: 15px; font-family: Calibri; color: rgb(0, 0, 0); vertical-align: baseline; white-space: pre-wrap; background-color: transparent;">439</span></span></p>
+    </td>
+    <td style="border-left:solid #000000 1px;border-right:solid #000000 1px;border-bottom:solid #000000 1px;border-top:solid #000000 1px;vertical-align:top;padding:7px 7px 7px 7px"><p dir="ltr" style="line-height:1.2;margin-top:0pt;margin-bottom:0pt;text-align: center;"><span id="docs-internal-guid-6ab6555c-456e-3b62-8087-2107963e5e4a"><span style="font-size: 15px; font-family: Calibri; color: rgb(0, 0, 0); vertical-align: baseline; white-space: pre-wrap; background-color: transparent;">414</span></span></p>
+    </td>
   </tr>
-  <tr>
-    <td class="tg-bsv2">13 - 19 April</td>
-    <td class="tg-bsv2">Work on a small data set and identify dependencies</td>
+  <tr style="height:0px">
+    <td style="border-left:solid #000000 1px;border-right:solid #000000 1px;border-bottom:solid #000000 1px;border-top:solid #000000 1px;vertical-align:top;padding:7px 7px 7px 7px"><p dir="ltr" style="line-height:1.2;margin-top:0pt;margin-bottom:0pt;text-align: center;"><span id="docs-internal-guid-6ab6555c-456e-3b62-8087-2107963e5e4a"><span style="font-size: 15px; font-family: Calibri; color: rgb(0, 0, 0); vertical-align: baseline; white-space: pre-wrap; background-color: transparent;">2</span></span></p>
+    </td>
+    <td style="border-left:solid #000000 1px;border-right:solid #000000 1px;border-bottom:solid #000000 1px;border-top:solid #000000 1px;vertical-align:top;padding:7px 7px 7px 7px"><p dir="ltr" style="line-height:1.2;margin-top:0pt;margin-bottom:0pt;text-align: center;"><span id="docs-internal-guid-6ab6555c-456e-3b62-8087-2107963e5e4a"><span style="font-size: 15px; font-family: Calibri; color: rgb(0, 0, 0); vertical-align: baseline; white-space: pre-wrap; background-color: transparent;">233</span></span></p>
+    </td>
+    <td style="border-left:solid #000000 1px;border-right:solid #000000 1px;border-bottom:solid #000000 1px;border-top:solid #000000 1px;vertical-align:top;padding:7px 7px 7px 7px"><p dir="ltr" style="line-height:1.2;margin-top:0pt;margin-bottom:0pt;text-align: center;"><span id="docs-internal-guid-6ab6555c-456e-3b62-8087-2107963e5e4a"><span style="font-size: 15px; font-family: Calibri; color: rgb(0, 0, 0); vertical-align: baseline; white-space: pre-wrap; background-color: transparent;">202</span></span></p>
+    </td>
   </tr>
-  <tr>
-    <td class="tg-031e">20 - 26 April</td>
-    <td class="tg-031e">There are multiple places, the code could be optimized, we’ll work on that and,parallelize the rendering and computation of multiple poses of a given state.</td>
+  <tr style="height:0px">
+    <td style="border-left:solid #000000 1px;border-right:solid #000000 1px;border-bottom:solid #000000 1px;border-top:solid #000000 1px;vertical-align:top;padding:7px 7px 7px 7px"><p dir="ltr" style="line-height:1.2;margin-top:0pt;margin-bottom:0pt;text-align: center;"><span id="docs-internal-guid-6ab6555c-456e-3b62-8087-2107963e5e4a"><span style="font-size: 15px; font-family: Calibri; color: rgb(0, 0, 0); vertical-align: baseline; white-space: pre-wrap; background-color: transparent;">4</span></span></p>
+    </td>
+    <td style="border-left:solid #000000 1px;border-right:solid #000000 1px;border-bottom:solid #000000 1px;border-top:solid #000000 1px;vertical-align:top;padding:7px 7px 7px 7px"><p dir="ltr" style="line-height:1.2;margin-top:0pt;margin-bottom:0pt;text-align: center;"><span id="docs-internal-guid-6ab6555c-456e-3b62-8087-2107963e5e4a"><span style="font-size: 15px; font-family: Calibri; color: rgb(0, 0, 0); vertical-align: baseline; white-space: pre-wrap; background-color: transparent;">171</span></span></p>
+    </td>
+    <td style="border-left:solid #000000 1px;border-right:solid #000000 1px;border-bottom:solid #000000 1px;border-top:solid #000000 1px;vertical-align:top;padding:7px 7px 7px 7px"><p dir="ltr" style="line-height:1.2;margin-top:0pt;margin-bottom:0pt;text-align: center;"><span id="docs-internal-guid-6ab6555c-456e-3b62-8087-2107963e5e4a"><span style="font-size: 15px; font-family: Calibri; color: rgb(0, 0, 0); vertical-align: baseline; white-space: pre-wrap; background-color: transparent;">155</span></span></p>
+    </td>
   </tr>
-  <tr>
-    <td class="tg-031e">27 - 3 May</td>
-    <td class="tg-031e">Based on the parallelization achieved, we will either render multiple depth images parallely using multiple GPU’s (on AWS) or we’ll only optimize OpenGL to render a few images in parallel.</td>
+  <tr style="height:0px">
+    <td style="border-left:solid #000000 1px;border-right:solid #000000 1px;border-bottom:solid #000000 1px;border-top:solid #000000 1px;vertical-align:top;padding:7px 7px 7px 7px"><p dir="ltr" style="line-height:1.2;margin-top:0pt;margin-bottom:0pt;text-align: center;"><span id="docs-internal-guid-6ab6555c-456e-3b62-8087-2107963e5e4a"><span style="font-size: 15px; font-family: Calibri; color: rgb(0, 0, 0); vertical-align: baseline; white-space: pre-wrap; background-color: transparent;">6</span></span></p>
+    </td>
+    <td style="border-left:solid #000000 1px;border-right:solid #000000 1px;border-bottom:solid #000000 1px;border-top:solid #000000 1px;vertical-align:top;padding:7px 7px 7px 7px"><p dir="ltr" style="line-height:1.2;margin-top:0pt;margin-bottom:0pt;text-align: center;"><span id="docs-internal-guid-6ab6555c-456e-3b62-8087-2107963e5e4a"><span style="font-size: 15px; font-family: Calibri; color: rgb(0, 0, 0); vertical-align: baseline; white-space: pre-wrap; background-color: transparent;">130</span></span></p>
+    </td>
+    <td style="border-left:solid #000000 1px;border-right:solid #000000 1px;border-bottom:solid #000000 1px;border-top:solid #000000 1px;vertical-align:top;padding:7px 7px 7px 7px"><p dir="ltr" style="line-height:1.2;margin-top:0pt;margin-bottom:0pt;text-align: center;"><span id="docs-internal-guid-6ab6555c-456e-3b62-8087-2107963e5e4a"><span style="font-size: 15px; font-family: Calibri; color: rgb(0, 0, 0); vertical-align: baseline; white-space: pre-wrap; background-color: transparent;">118</span></span></p>
+    </td>
   </tr>
-  <tr>
-    <td class="tg-031e">4 - 10 May</td>
-    <td class="tg-031e">Optimize, Fixing bugs, Testing and Final Report.</td>
+  <tr style="height:0px">
+    <td style="border-left:solid #000000 1px;border-right:solid #000000 1px;border-bottom:solid #000000 1px;border-top:solid #000000 1px;vertical-align:top;padding:7px 7px 7px 7px"><p dir="ltr" style="line-height:1.2;margin-top:0pt;margin-bottom:0pt;text-align: center;"><span id="docs-internal-guid-6ab6555c-456e-3b62-8087-2107963e5e4a"><span style="font-size: 15px; font-family: Calibri; color: rgb(0, 0, 0); vertical-align: baseline; white-space: pre-wrap; background-color: transparent;">8</span></span></p>
+    </td>
+    <td style="border-left:solid #000000 1px;border-right:solid #000000 1px;border-bottom:solid #000000 1px;border-top:solid #000000 1px;vertical-align:top;padding:7px 7px 7px 7px"><p dir="ltr" style="line-height:1.2;margin-top:0pt;margin-bottom:0pt;text-align: center;"><span id="docs-internal-guid-6ab6555c-456e-3b62-8087-2107963e5e4a"><span style="font-size: 15px; font-family: Calibri; color: rgb(0, 0, 0); vertical-align: baseline; white-space: pre-wrap; background-color: transparent;">87</span></span></p>
+    </td>
+    <td style="border-left:solid #000000 1px;border-right:solid #000000 1px;border-bottom:solid #000000 1px;border-top:solid #000000 1px;vertical-align:top;padding:7px 7px 7px 7px"><p dir="ltr" style="line-height:1.2;margin-top:0pt;margin-bottom:0pt;text-align: center;"><span id="docs-internal-guid-6ab6555c-456e-3b62-8087-2107963e5e4a"><span style="font-size: 15px; font-family: Calibri; color: rgb(0, 0, 0); vertical-align: baseline; white-space: pre-wrap; background-color: transparent;">64</span></span></p>
+    </td>
+  </tr>
+  <tr style="height:0px">
+    <td style="border-left:solid #000000 1px;border-right:solid #000000 1px;border-bottom:solid #000000 1px;border-top:solid #000000 1px;vertical-align:top;padding:7px 7px 7px 7px"><p dir="ltr" style="line-height:1.2;margin-top:0pt;margin-bottom:0pt;text-align: center;"><span id="docs-internal-guid-6ab6555c-456e-3b62-8087-2107963e5e4a"><span style="font-size: 15px; font-family: Calibri; color: rgb(0, 0, 0); vertical-align: baseline; white-space: pre-wrap; background-color: transparent;">16</span></span></p>
+    </td>
+    <td style="border-left:solid #000000 1px;border-right:solid #000000 1px;border-bottom:solid #000000 1px;border-top:solid #000000 1px;vertical-align:top;padding:7px 7px 7px 7px"><p dir="ltr" style="line-height:1.2;margin-top:0pt;margin-bottom:0pt;text-align: center;"><span id="docs-internal-guid-6ab6555c-456e-3b62-8087-2107963e5e4a"><span style="font-size: 15px; font-family: Calibri; color: rgb(0, 0, 0); vertical-align: baseline; white-space: pre-wrap; background-color: transparent;">65</span></span></p>
+    </td>
+    <td style="border-left:solid #000000 1px;border-right:solid #000000 1px;border-bottom:solid #000000 1px;border-top:solid #000000 1px;vertical-align:top;padding:7px 7px 7px 7px"><p dir="ltr" style="line-height:1.2;margin-top:0pt;margin-bottom:0pt;text-align: center;"><span id="docs-internal-guid-6ab6555c-456e-3b62-8087-2107963e5e4a"><span style="font-size: 15px; font-family: Calibri; color: rgb(0, 0, 0); vertical-align: baseline; white-space: pre-wrap; background-color: transparent;">55</span></span></p>
+    </td>
+  </tr>
+  <tr style="height:0px">
+    <td style="border-left:solid #000000 1px;border-right:solid #000000 1px;border-bottom:solid #000000 1px;border-top:solid #000000 1px;vertical-align:top;padding:7px 7px 7px 7px"><p dir="ltr" style="line-height:1.2;margin-top:0pt;margin-bottom:0pt;text-align: center;"><span id="docs-internal-guid-6ab6555c-456e-3b62-8087-2107963e5e4a"><span style="font-size: 15px; font-family: Calibri; color: rgb(0, 0, 0); vertical-align: baseline; white-space: pre-wrap; background-color: transparent;">32</span></span></p>
+    </td>
+    <td style="border-left:solid #000000 1px;border-right:solid #000000 1px;border-bottom:solid #000000 1px;border-top:solid #000000 1px;vertical-align:top;padding:7px 7px 7px 7px"><p dir="ltr" style="line-height:1.2;margin-top:0pt;margin-bottom:0pt;text-align: center;"><span id="docs-internal-guid-6ab6555c-456e-3b62-8087-2107963e5e4a"><span style="font-size: 15px; font-family: Calibri; color: rgb(0, 0, 0); vertical-align: baseline; white-space: pre-wrap; background-color: transparent;">63</span></span></p>
+    </td>
+    <td style="border-left:solid #000000 1px;border-right:solid #000000 1px;border-bottom:solid #000000 1px;border-top:solid #000000 1px;vertical-align:top;padding:7px 7px 7px 7px"><p dir="ltr" style="line-height:1.2;margin-top:0pt;margin-bottom:0pt;text-align: center;"><span id="docs-internal-guid-6ab6555c-456e-3b62-8087-2107963e5e4a"><span style="font-size: 15px; font-family: Calibri; color: rgb(0, 0, 0); vertical-align: baseline; white-space: pre-wrap; background-color: transparent;">58</span></span></p>
+    </td>
   </tr>
 </table>
+      
+<h3><a class="anchor" aria-hidden="true"><span class="octicon octicon-link"></span></a>Cluster Configuration:</h3>
+<p>The graph below shows the speedup when using 1, 2 , 3 and 4 Intel Xeon E5-2680v2 machines in an AWS cluster. We scaled the single machine configuration across different nodes and observed higher speedup when using 2 machines. The speedup dropped when using 3 or 4 machines, which we speculate that as the work set handled by each worker reduces the communication overhead becomes significant.</p>
 
+<p align="middle">
+<img border="0" src="data/cluster.png" width="900" height="420">
+</p>
 
-<h3><center><a id="proposal" class="anchor" href="#proposal" aria-hidden="true"><span class="octicon octicon-link"></span></a>Project Proposal</center></h3>
+<p><i>How do we decide what type of machine to use, CPU or GPU based?</i></p>
+<p>
+Profiling results showed that hardware rendering is almost 7x faster. However, it is generally the case that we have many more CPUs than GPUs. Let’s assume we have <code>Np</code> CPUs and <code>Ng</code> GPUs and time taken to render an image by each is <code>Tp</code> and <code>Tg</code> respectively, then CPU should be better than GPU if, </p>
 
-<h3><a id="background" class="anchor" aria-hidden="true"><span class="octicon octicon-link"></span></a>Summary:</h3>
+<p align="middle">
+<img border="0" src="data/equation.png" width="100" height="80">
+</p>
 
-<p>We want to localize the objects by generating a hypothesis (depth image) that best matches the input, according to some error metric.</p>
+<p>So, if the system has 8 cores and 1 GPU, hardware rendering need to be at least 8x better than the software rendering to be a favorable choice.</p>
 
-<!-- <h3><a id="summary" class="anchor" aria-hidden="true"><span class="octicon octicon-link"></span></a>Summary:</h3> -->
+<!-- <h3><a class="anchor" aria-hidden="true"><span class="octicon octicon-link"></span></a>Source Code:</h3> -->
 
-<p>The system will be getting depth image of the scene from a sensor such as Kinect, 3D models of N objects and number of objects in the scene K (K<=N), where N is the total number of objects possible, as input. The system aims to localize and find orientation of each of the K objects.
- 
-The idea is to follow a graph based search model, more in the lines of a breadth first search or an astar algorithm. We define the system state using a struct containing 2 vectors:
- 
-vector obj_ids : This is a vector of object ids. Each object in the sample space is defined by a unique object id. The object ids of all the objects in the system is populated in the obj_ids vector.
-vector obj_pos : This is a vector of the object’s position. Like the id, the object in a 3D space is uniquely defined by its position (coordinates) relative to a certain origin. We define a unique position for each object and populate it in the obj_pos vector.
-obj_pos would again be a struct in itself, which stores x and y coordinates along with the orientation, θ.
- 
-The struct can be defined to be:</p>
-<pre><code>
-struct space
-{
-    vector<int> obj_ids;
-    vector<pose> obj_pos;
-};
-</code></pre>
- 
-<p>The baseline graph search algorithm is as follows:
- 
-We pick up one object and add it to our vectors obj_ids and obj_pos. Addition of a new object will result in the addition of a new layer to the graph.
-We compare the different poses of the objects with the database. The number of poses to be compared would depend on the dimension of the space.
-For each of the comparison we calculate error based on |Oij - dij|, where Oij is observed depth and dij is the simulated depth.
-If the error is within the certain threshold we go to 1, until all K objects have been added to the vectors.
-Ultimately, a state with least error gives the pose of all the objects into consideration.</p>
+<h3><a class="anchor" aria-hidden="true"><span class="octicon octicon-link"></span></a>References:</h3>
+The project was in collaboration with Search-based Planning Laboratory (SBPL) at Robotics Institute, Carnegie Mellon. We would like to thank Venkat Narayanan, who helped us with all issues related to the infrastructure of the starter code. We hope this would be of great help to them!
 
-<!-- <pre><code>$ cd your_repo_root/repo_name
-$ git fetch origin
-$ git checkout gh-pages
-</code></pre> -->
+<p><i>Source code:</i> Since the research is ongoing, we cannot make the source code public.
+</p>
 
-<h3><a id="proposal-goals" class="anchor" aria-hidden="true"><span class="octicon octicon-link"></span></a>The Challenge:</h3>
+<h3><a class="anchor" aria-hidden="true"><span class="octicon octicon-link"></span></a>List of work by each of us:</h3>Equal work was performed by both project members.
 
-<p>The challenge chiefly involves parallelizing the above algorithm.
-The scope of parallelism involves in the comparison of the given pose of the object with the all the poses of the object in the database. That is, we parallelize rendering of multiple depth images.
-2.     The current code involves multiple dependencies in computation and rendering of different poses for the state. It requires us to remove these dependencies to fully utilize the parallelism involved.
- 
-Our main intention in participating in this project is to gain experience working on object localization algorithms and being able to deploy the algorithm on a robot.
- 
-Testing of the algorithm is going to be critical. We will start with depth image of 2 objects and ensure correctness. We will then debug and optimize the speedup obtained. Then we would increase the number of objects and check the performance. Once we are happy with speedup of static depth images, we will use it with Kinect.
- </p>
-
- <h3><a id="proposal-cpu" class="anchor" aria-hidden="true"><span class="octicon octicon-link"></span></a>Resource:</h3>
-<p>We intend to use GPUs for rendering images. We will be building on top of starter code provided by researchers at Robotics Institute, CMU. The code uses Point Cloud Library (PCL) and Search Based Planning Library (SPBL) extensively. The starter code is written as a ROS (Robot Operating System) package and will mainly be used in our compilation.<h3>
-
-<h3><a id="proposal-goals" class="anchor" aria-hidden="true"><span class="octicon octicon-link"></span></a>Goals and Deliverables:</h3>
-<p>We intend to use GPUs for rendering images. We will be building on top of starter code provided by researchers at Robotics Institute, CMU. The code uses Point Cloud Library (PCL) and Search Based Planning Library (SPBL) extensively. The starter code is written as a ROS (Robot Operating System) package and will mainly be used in our compilation.<h3>
-
-<h3><a id="proposal-goals" class="anchor" aria-hidden="true"><span class="octicon octicon-link"></span></a>Platform</h3>
-<p>We do believe that the computations involved are parallel in nature. Hence we would want to exploit it to obtain better speedups leveraging the available parallel platforms. Considering this, we would choose to work on the GPU clusters here at CMU.<h3>
-
-
-<h3><a id="checkpoint-sched" class="anchor" aria-hidden="true"><span class="octicon octicon-link"></span></a>Schedule:</h3>
-
-<style type="text/css">
-.tg  {border-collapse:collapse;border-spacing:0;}
-.tg td{font-family:Arial, sans-serif;font-size:14px;padding:10px 5px;border-style:solid;border-width:1px;overflow:hidden;word-break:normal;}
-.tg th{font-family:Arial, sans-serif;font-size:14px;font-weight:normal;padding:10px 5px;border-style:solid;border-width:1px;overflow:hidden;word-break:normal;}
-</style>
-
-<style type="text/css">
-.tg  {border-collapse:collapse;border-spacing:0;}
-.tg td{font-family:Arial, sans-serif;font-size:14px;padding:10px 5px;border-style:solid;border-width:1px;overflow:hidden;word-break:normal;}
-.tg th{font-family:Arial, sans-serif;font-size:14px;font-weight:normal;padding:10px 5px;border-style:solid;border-width:1px;overflow:hidden;word-break:normal;}
-</style>
-<style type="text/css">
-.tg  {border-collapse:collapse;border-spacing:0;}
-.tg td{font-family:Arial, sans-serif;font-size:14px;padding:10px 5px;border-style:solid;border-width:1px;overflow:hidden;word-break:normal;}
-.tg th{font-family:Arial, sans-serif;font-size:14px;font-weight:normal;padding:10px 5px;border-style:solid;border-width:1px;overflow:hidden;word-break:normal;}
-.tg .tg-e3zv{font-weight:bold}
-.tg .tg-bsv2{background-color:#efefef}
-</style>
-<style type="text/css">
-.tg  {border-collapse:collapse;border-spacing:0;}
-.tg td{font-family:Arial, sans-serif;font-size:14px;padding:10px 5px;border-style:solid;border-width:1px;overflow:hidden;word-break:normal;}
-.tg th{font-family:Arial, sans-serif;font-size:14px;font-weight:normal;padding:10px 5px;border-style:solid;border-width:1px;overflow:hidden;word-break:normal;}
-.tg .tg-e3zv{font-weight:bold}
-.tg .tg-bsv2{background-color:#efefef}
-</style>
-<table class="tg" style="undefined;table-layout: fixed; width: 1115px">
-<colgroup>
-<col style="width: 183px">
-<col style="width: 650px">
-</colgroup>
-  <tr>
-    <th class="tg-e3zv">Dates</th>
-    <th class="tg-e3zv">Proposed plan</th>
-  </tr>
-  <tr>
-    <td class="tg-bsv2">3 - 12  April</td>
-    <td class="tg-bsv2">Setup ROS and understand low level implementations of the starter code</td>
-  </tr>
-  <tr>
-    <td class="tg-bsv2">13 - 19 April</td>
-    <td class="tg-bsv2">Work on a small data set and identify dependencies</td>
-  </tr>
-  <tr>
-    <td class="tg-031e">20 - 26 April</td>
-    <td class="tg-031e">There are multiple places, the code could be optimized, we’ll work on that and,parallelize the rendering and computation of multiple poses of a given state.</td>
-  </tr>
-  <tr>
-    <td class="tg-031e">27 - 3 May</td>
-    <td class="tg-031e">Based on the parallelization achieved, we will either render multiple depth images parallely using multiple GPU’s (on AWS) or we’ll only optimize OpenGL to render a few images in parallel.</td>
-  </tr>
-  <tr>
-    <td class="tg-031e">4 - 10 May</td>
-    <td class="tg-031e">Optimize, Fixing bugs, Testing and Final Report.</td>
-  </tr>
-</table>
-
-
-
-
-      <footer class="site-footer">
-        <span class="site-footer-owner">The project is maintained by Naman.</span>
+<footer class="site-footer">
+        <!-- <span class="site-footer-owner">The project is maintained by Naman.</span> -->
         <span class="site-footer-credits">This page was generated by GitHub Pages using the Cayman theme by Jason Long.
         </span>
       </footer>
@@ -255,7 +366,6 @@ Testing of the algorithm is going to be critical. We will start with depth image
   ga('send', 'pageview');
 
 </script>
-
   
   </body>
 </html>
