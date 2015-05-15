@@ -158,18 +158,6 @@ struct StateProperties {
 };
 
 typedef struct {
-  int x;
-  int y;
-  int theta;
-} BaseDisc;
-
-typedef struct {
-  double x;
-  double y;
-  double theta;
-} BasePose;
-
-typedef struct {
   int source_ids[NUM_MODELS];
   int source_disc[NUM_MODELS*3];
   double source_pose[NUM_MODELS*3];

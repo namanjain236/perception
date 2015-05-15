@@ -1983,12 +1983,14 @@ void EnvObjectRecognition::SetObservation(vector<int> object_ids,
   knn.reset(new pcl::search::KdTree<PointT>(true));
   knn->setInputCloud(observed_cloud_);
 
-  std::stringstream ss;
-  ss.precision(20);
-  ss << kDebugDir + "obs_cloud" << ".pcd";
-  pcl::PCDWriter writer;
-  writer.writeBinary (ss.str()  , *observed_cloud_);
-  PrintImage(kDebugDir + string("ground_truth.png"), observed_depth_image_);
+  if (id == 0) {
+    std::stringstream ss;
+    ss.precision(20);
+    ss << kDebugDir + "obs_cloud" << ".pcd";
+    pcl::PCDWriter writer;
+    writer.writeBinary (ss.str()  , *observed_cloud_);
+    PrintImage(kDebugDir + string("ground_truth.png"), observed_depth_image_);
+  }
 }
 
 double EnvObjectRecognition::GetICPAdjustedPose(const PointCloudPtr cloud_in,
