@@ -44,11 +44,15 @@ namespace perception_utils
   /**@brief Remove statistical outliers**/
   PointCloudPtr RemoveOutliers(PointCloudPtr cloud);
 
+  /**@brief Remove radius outliers**/
+  PointCloudPtr RemoveRadiusOutliers(PointCloudPtr cloud, double radius, int min_neighbors);
+
   /**@brief Passthrough filter**/
   PointCloudPtr PassthroughFilter(PointCloudPtr cloud);
 
   /**@brief Downsample point cloud**/
   PointCloudPtr DownsamplePointCloud(PointCloudPtr cloud);
+  PointCloudPtr DownsamplePointCloud(PointCloudPtr cloud, double voxel_size);
 
   /**@brief Draw bounding box for point cloud**/
   void DrawOrientedBoundingBox(pcl::visualization::PCLVisualizer& viewer, PointCloudPtr cloud, std::string box_id);

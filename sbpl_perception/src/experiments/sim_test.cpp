@@ -14,6 +14,7 @@
 #include <chrono>
 #include <random>
 #include <mpi.h>
+#include <memory>
 
 
 using namespace std;
@@ -42,39 +43,67 @@ int main(int argc, char **argv) {
 
   char name[20];
   sprintf(name, "sim_test");
-
-  ros::init(argc, argv, name);
-  ros::NodeHandle nh;
-  ros::NodeHandle private_nh("~");
-
   vector<string> model_files, empty_model_files;
   vector<bool> symmetries, empty_symmetries;
-  private_nh.param("model_files", model_files, empty_model_files);
-  private_nh.param("model_symmetries", symmetries, empty_symmetries);
-  printf("There are %d model files\n", model_files.size());
+  bool image_debug;
 
-  EnvObjectRecognition *env_obj = new EnvObjectRecognition(nh, world_rank, world_size);
+  if (world_rank == 0) {
+    ros::init(argc, argv, name);
+    ros::NodeHandle nh;
+    ros::NodeHandle private_nh("~");
+    private_nh.param("model_files", model_files, empty_model_files);
+    private_nh.param("model_symmetries", symmetries, empty_symmetries);
+    private_nh.param("image_debug", image_debug, false);
+    printf("There are %d model files\n", model_files.size());
+  }
+
+    // ros::param::param("/model_files", model_files, empty_model_files);
+    // ros::param::param("/model_symmetries", symmetries, empty_symmetries);
+    // ros::param::param("/image_debug", image_debug, false);
+    // printf("There are %d model files\n", model_files.size());
+
+  MPI_Barrier(MPI_COMM_WORLD);
+
+  int exp_count = model_files.size(); 
+
+  MPI_Bcast(&exp_count, 1, MPI_INT, 0, MPI_COMM_WORLD);
+
+  MPI_Bcast(&image_debug, 1, MPI::BOOL, 0, MPI_COMM_WORLD);
+
+  for(int i = 0; i < exp_count; i++) {
+    char temp[256];
+    char sym;
+    if (world_rank == 0) {
+      strcpy(temp, model_files[i].c_str());
+      sym = (char) symmetries[i];
+    }
+    MPI_Bcast(temp, 256, MPI_CHAR, 0, MPI_COMM_WORLD);
+    MPI_Bcast(&sym, 1, MPI_CHAR, 0, MPI_COMM_WORLD);
+    if (world_rank != 0) {
+      std::string str(temp);
+      model_files.push_back(str);
+      symmetries.push_back((bool) sym);
+    }
+  }
+
 
   // Print off a hello world message
   printf("Hello world from processor %s, rank %d out of %d processors\n",
          processor_name, world_rank, world_size);
 
+  MPI_Barrier(MPI_COMM_WORLD);
+
+  unique_ptr<EnvObjectRecognition> env_obj(new EnvObjectRecognition(world_rank, world_size));
+
+  std::cout << "model_files proc: " << world_rank << ", size: " << model_files.size() << std::endl;
 
   // Set model files
-  // vector<bool> symmetries;
-  // symmetries.resize(model_files.size(), false);
-  // symmetries[0] = true;
-  // symmetries[4] = true;
   env_obj->LoadObjFiles(model_files, symmetries);
+  // Set debug options
+  env_obj->SetDebugOptions(image_debug);
 
 
   // Setup camera
-  // double roll = 0.0;
-  // double pitch = M_PI / 3;
-  // double yaw = 0.0;
-  // double x = -0.6;
-  // double y = 0.0;
-  // double z = 1.0;
   double roll = 0.0;
   double pitch = 20.0 * (M_PI / 180.0);
   double yaw = 0.0;
@@ -208,6 +237,10 @@ int main(int argc, char **argv) {
   // // Greedy ICP Planner
   // State greedy_state = env_obj->ComputeGreedyICPPoses();
   // return 0;
+  
+  // VFH Estimator
+  // State vfh_state = env_obj->ComputeVFHPoses();
+  // return 0;
 
 
   //-------------------------------------------------------------------//
@@ -215,8 +248,9 @@ int main(int argc, char **argv) {
   // Plan
   
   if (world_rank == 0) {
-    // SBPLPlanner *planner  = new LazyARAPlanner(env_obj, true);
-    MHAPlanner *planner  = new MHAPlanner(env_obj, 2, true);
+
+    // unique_ptr<SBPLPlanner> planner(new LazyARAPlanner(env_obj, true));
+    unique_ptr<MHAPlanner> planner(new MHAPlanner(env_obj.get(), 2, true));
 
     int goal_id = env_obj->GetGoalStateID();
     int start_id = env_obj->GetStartStateID();

@@ -18,7 +18,6 @@
 #include <pcl/PCLPointCloud2.h>
 #include <pcl_conversions/pcl_conversions.h>
 
-
 #include <pcl/io/io.h>
 #include <pcl/io/pcd_io.h>
 #include <pcl/io/png_io.h>
@@ -35,8 +34,6 @@
 #include <boost/lexical_cast.hpp>
 #include <mpi.h>
 #include <assert.h>
-#include <cilk/cilk.h>
-
 
 using namespace std;
 using namespace perception_utils;
@@ -56,39 +53,13 @@ const string kDebugDir = ros::package::getPath("sbpl_perception") +
 static double diff = 0;
 #endif
 
-ObjectModel::ObjectModel(const pcl::PolygonMesh mesh, const bool symmetric) {
-  mesh_ = mesh;
-  symmetric_ = symmetric;
-  SetObjectProperties();
-}
 
-void ObjectModel::SetObjectProperties() {
-  pcl::PointCloud<pcl::PointXYZ>::Ptr cloud (new
-                                             pcl::PointCloud<pcl::PointXYZ>);
-  pcl::fromPCLPointCloud2(mesh_.cloud, *cloud);
-  pcl::PointXYZ min_pt, max_pt;
-  getMinMax3D(*cloud, min_pt, max_pt);
-  min_x_ = min_pt.x;
-  min_y_ = min_pt.y;
-  min_z_ = min_pt.z;
-  max_x_ = max_pt.x;
-  max_y_ = max_pt.y;
-  max_z_ = max_pt.z;
-  rad_ = max(fabs(max_x_ - min_x_), fabs(max_y_ - min_y_)) / 2.0;
-}
-
-
-EnvObjectRecognition::EnvObjectRecognition(ros::NodeHandle nh) : nh_(nh),
-  use_cloud_cost_(false),
-  max_z_seen_(-1.0) {
-  ros::NodeHandle private_nh("~");
-  private_nh.param("reference_frame", reference_frame_,
-                   std::string("/base_link"));
-  vector<string> empty_model_files;
-  private_nh.param("model_files", model_files_, empty_model_files);
-  private_nh.param("image_debug", image_debug_, true);
-  private_nh.param("icp_succ", icp_succ_, false);
-
+EnvObjectRecognition::EnvObjectRecognition(int rank, int numproc) : 
+  image_debug_(false),
+  id(rank),
+  num_proc(numproc) {
+  
+  // OpenGL requires argc and argv
   char **argv;
   argv = new char *[2];
   argv[0] = new char[1];
@@ -96,15 +67,7 @@ EnvObjectRecognition::EnvObjectRecognition(ros::NodeHandle nh) : nh_(nh),
   argv[0] = "0";
   argv[1] = "1";
 
-  std::cout << "From Constructor" << std::endl;
-
-  std::vector<Eigen::Isometry3d, Eigen::aligned_allocator<Eigen::Isometry3d>>
-                                                                           poses;
-  Eigen::Vector3d focus_center(0, 0, 0);
-  double halo_r = 1.0;//4
-  double halo_dz = 0.5;//2
-  int n_poses = 1; //16
-  GenerateHalo(poses, focus_center, halo_r, halo_dz, n_poses);
+  std::cout << "From Constructor: " <<  id << std::endl;
 
   env_params_.x_min = -0.3;
   env_params_.x_max = 0.31;
@@ -114,12 +77,11 @@ EnvObjectRecognition::EnvObjectRecognition(ros::NodeHandle nh) : nh_(nh),
   // env_params_.res = 0.05;
   // env_params_.theta_res = M_PI / 10; //8
 
-  env_params_.res = 0.2; //0.2
+  env_params_.res = 0.1; //0.2
   const int num_thetas = 16;
   env_params_.theta_res = 2 * M_PI / static_cast<double>(num_thetas); //8
 
   env_params_.table_height = 0;
-  env_params_.camera_pose = poses[0];
   env_params_.img_width = 640;
   env_params_.img_height = 480;
   env_params_.num_models = 0;
@@ -156,10 +118,6 @@ EnvObjectRecognition::EnvObjectRecognition(ros::NodeHandle nh) : nh_(nh),
                                  start_state_); // Start state is the empty state
   minz_map_[env_params_.start_state_id] = 0;
   maxz_map_[env_params_.start_state_id] = 0;
-
-  // LoadObjFiles(model_files_);
-  // env_params_.num_objects =
-  // env_params_.num_models; // For now assume that number of objects on table is same as number as models
 
   kinect_simulator_ = SimExample::Ptr(new SimExample(0, argv,
                                                      env_params_.img_height, env_params_.img_width));
@@ -177,35 +135,16 @@ EnvObjectRecognition::EnvObjectRecognition(ros::NodeHandle nh) : nh_(nh),
   pcl::console::setVerbosityLevel(pcl::console::L_ALWAYS);
 }
 
-EnvObjectRecognition::EnvObjectRecognition(ros::NodeHandle nh, int rank, int numproc) : nh_(nh),
-  use_cloud_cost_(false),
-  max_z_seen_(-1.0),
-  id(rank),
-  num_proc(numproc) {
-  ros::NodeHandle private_nh("~");
-  private_nh.param("reference_frame", reference_frame_,
-                   std::string("/base_link"));
-  vector<string> empty_model_files;
-  private_nh.param("model_files", model_files_, empty_model_files);
-  private_nh.param("image_debug", image_debug_, true);
-  private_nh.param("icp_succ", icp_succ_, false);
-
+EnvObjectRecognition::EnvObjectRecognition() : 
+  image_debug_(false)
+ {
+  // OpenGL requires argc and argv
   char **argv;
   argv = new char *[2];
   argv[0] = new char[1];
   argv[1] = new char[1];
   argv[0] = "0";
   argv[1] = "1";
-
-  std::cout << "From Constructor" << std::endl;
-
-  std::vector<Eigen::Isometry3d, Eigen::aligned_allocator<Eigen::Isometry3d>>
-                                                                           poses;
-  Eigen::Vector3d focus_center(0, 0, 0);
-  double halo_r = 1.0;//4
-  double halo_dz = 0.5;//2
-  int n_poses = 1; //16
-  GenerateHalo(poses, focus_center, halo_r, halo_dz, n_poses);
 
   env_params_.x_min = -0.3;
   env_params_.x_max = 0.31;
@@ -215,12 +154,11 @@ EnvObjectRecognition::EnvObjectRecognition(ros::NodeHandle nh, int rank, int num
   // env_params_.res = 0.05;
   // env_params_.theta_res = M_PI / 10; //8
 
-  env_params_.res = 0.2; //0.2
+  env_params_.res = 0.1; //0.2
   const int num_thetas = 16;
   env_params_.theta_res = 2 * M_PI / static_cast<double>(num_thetas); //8
 
   env_params_.table_height = 0;
-  env_params_.camera_pose = poses[0];
   env_params_.img_width = 640;
   env_params_.img_height = 480;
   env_params_.num_models = 0;
@@ -257,10 +195,6 @@ EnvObjectRecognition::EnvObjectRecognition(ros::NodeHandle nh, int rank, int num
                                  start_state_); // Start state is the empty state
   minz_map_[env_params_.start_state_id] = 0;
   maxz_map_[env_params_.start_state_id] = 0;
-
-  // LoadObjFiles(model_files_);
-  // env_params_.num_objects =
-  // env_params_.num_models; // For now assume that number of objects on table is same as number as models
 
   kinect_simulator_ = SimExample::Ptr(new SimExample(0, argv,
                                                      env_params_.img_height, env_params_.img_width));
@@ -321,7 +255,7 @@ void EnvObjectRecognition::LoadObjFiles(const vector<string> &model_files,
     ROS_INFO("Object dimensions: X: %f %f, Y: %f %f, Z: %f %f, Rad: %f",
              obj_model.min_x(),
              obj_model.max_x(), obj_model.min_y(), obj_model.max_y(), obj_model.min_z(),
-             obj_model.max_z(), obj_model.rad());
+             obj_model.max_z(), obj_model.GetCircumscribedRadius());
     ROS_INFO("\n");
 
   }
@@ -350,7 +284,7 @@ bool EnvObjectRecognition::IsValidPose(State s, int model_id, Pose p) {
   //                                             indices,
   //                                             sqr_dists, 1); //0.2
   // double obj_rad = 0.15; //0.15
-  double search_rad = obj_models_[model_id].rad() + env_params_.res / 2.0;
+  double search_rad = obj_models_[model_id].GetCircumscribedRadius() + env_params_.res / 2.0;
   int num_neighbors_found = knn->radiusSearch(point, search_rad,
                                               indices,
                                               sqr_dists, 1); //0.2
@@ -361,7 +295,8 @@ bool EnvObjectRecognition::IsValidPose(State s, int model_id, Pose p) {
 
   // TODO: revisit this and accomodate for collision model
   double rad_1, rad_2;
-  rad_1 = obj_models_[model_id].rad();
+  // rad_1 = obj_models_[model_id].GetCircumscribedRadius();
+  rad_1 = obj_models_[model_id].GetInscribedRadius();
 
   for (size_t ii = 0; ii < s.object_ids.size(); ++ii) {
     int obj_id = s.object_ids[ii];
@@ -372,7 +307,8 @@ bool EnvObjectRecognition::IsValidPose(State s, int model_id, Pose p) {
     //   return false;
     // }
 
-    rad_2 = obj_models_[obj_id].rad();
+    // rad_2 = obj_models_[obj_id].GetCircumscribedRadius();
+    rad_2 = obj_models_[obj_id].GetInscribedRadius();
 
     if ((p.x - obj_pose.x) * (p.x - obj_pose.x) + (p.y - obj_pose.y) *
         (p.y - obj_pose.y) < (rad_1 + rad_2) * (rad_1 + rad_2))  {
@@ -1297,62 +1233,51 @@ int EnvObjectRecognition::GetTrueCost(const State source_state,
   PointCloudPtr succ_cloud(new PointCloud);
   PointCloudPtr cloud_out(new PointCloud);
 
-  if (icp_succ_) {
-    State s_new_obj;
-    s_new_obj.object_ids.push_back(last_object_id);
-    s_new_obj.object_poses.push_back(child_pose);
-    succ_depth_buffer = GetDepthImage(s_new_obj, &new_obj_depth_image);
+  // Begin ICP Adjustment
+  State s_new_obj;
+  s_new_obj.object_ids.push_back(last_object_id);
+  s_new_obj.object_poses.push_back(child_pose);
+  succ_depth_buffer = GetDepthImage(s_new_obj, &new_obj_depth_image);
 
-    // Create new buffer with only new pixels
-    float new_pixel_buffer[env_params_.img_width * env_params_.img_height];
+  // Create new buffer with only new pixels
+  float new_pixel_buffer[env_params_.img_width * env_params_.img_height];
 
-    for (int y = 0; y <  env_params_.img_height; ++y) {
-      for (int x = 0; x < env_params_.img_width; ++x) {
-        int i = y * env_params_.img_width + x ; // depth image index
-        int i_in = (env_params_.img_height - 1 - y) * env_params_.img_width + x
-                   ; // flip up down (buffer index)
+  for (int y = 0; y <  env_params_.img_height; ++y) {
+    for (int x = 0; x < env_params_.img_width; ++x) {
+      int i = y * env_params_.img_width + x ; // depth image index
+      int i_in = (env_params_.img_height - 1 - y) * env_params_.img_width + x
+                 ; // flip up down (buffer index)
 
-        if (new_obj_depth_image[i] != 20000 && source_depth_image[i] == 20000) {
-          new_pixel_buffer[i_in] = succ_depth_buffer[i_in];
-        } else {
-          new_pixel_buffer[i_in] = 1.0; // max range
-        }
+      if (new_obj_depth_image[i] != 20000 && source_depth_image[i] == 20000) {
+        new_pixel_buffer[i_in] = succ_depth_buffer[i_in];
+      } else {
+        new_pixel_buffer[i_in] = 1.0; // max range
       }
     }
-
-    // Align with ICP
-    // Only non-occluded points
-    kinect_simulator_->rl_->getPointCloudFromBuffer (cloud_in, new_pixel_buffer,
-                                                     true,
-                                                     env_params_.camera_pose);
-
-    double icp_fitness_score = GetICPAdjustedPose(cloud_in, pose_in, cloud_out,
-                                                  &pose_out);
-    // icp_cost = static_cast<int>(kICPCostMultiplier * icp_fitness_score);
-    int last_idx = child_state.object_poses.size() - 1;
-
-    adjusted_child_state->object_poses[last_idx] = pose_out;
   }
+
+  // Align with ICP
+  // Only non-occluded points
+  kinect_simulator_->rl_->getPointCloudFromBuffer (cloud_in, new_pixel_buffer,
+                                                   true,
+                                                   env_params_.camera_pose);
+
+  double icp_fitness_score = GetICPAdjustedPose(cloud_in, pose_in, cloud_out,
+                                                &pose_out);
+  // icp_cost = static_cast<int>(kICPCostMultiplier * icp_fitness_score);
+  int last_idx = child_state.object_poses.size() - 1;
+
+  adjusted_child_state->object_poses[last_idx] = pose_out;
+  // End ICP Adjustment
 
   // Check again after icp
   if (!IsValidPose(source_state, last_object_id,
-                   child_state.object_poses.back())) {
+                   adjusted_child_state->object_poses.back())) {
     // printf(" state %d is invalid\n ", child_id);
     return -1;
   }
 
-  // if (icp_succ_ && image_debug_) {
-  //   std::stringstream ss1, ss2;
-  //   ss1.precision(20);
-  //   ss2.precision(20);
-  //   ss1 << kDebugDir + "cloud_" << child_id << ".pcd";
-  //   ss2 << kDebugDir + "cloud_aligned_" << child_id << ".pcd";
-  //   pcl::PCDWriter writer;
-  //   writer.writeBinary (ss1.str()  , *cloud_in);
-  //   writer.writeBinary (ss2.str()  , *cloud_out);
-  // }
-
-  succ_depth_buffer = GetDepthImage(child_state, &depth_image);
+  succ_depth_buffer = GetDepthImage(*adjusted_child_state, &depth_image);
   // All points
   kinect_simulator_->rl_->getPointCloud(succ_cloud, true,
                                         env_params_.camera_pose);
@@ -1369,6 +1294,30 @@ int EnvObjectRecognition::GetTrueCost(const State source_state,
   // Cache the min and max depths
   child_properties->last_min_depth = succ_min_depth;
   child_properties->last_max_depth = succ_max_depth;
+
+
+
+  // Must use re-rendered adjusted partial cloud for cost
+  for (int y = 0; y <  env_params_.img_height; ++y) {
+    for (int x = 0; x < env_params_.img_width; ++x) {
+      int i = y * env_params_.img_width + x ; // depth image index
+      int i_in = (env_params_.img_height - 1 - y) * env_params_.img_width + x
+                 ; // flip up down (buffer index)
+
+      // auto it = find(new_pixel_indices.begin(), new_pixel_indices.end(), i);
+      // if (it == new_pixel_indices.end()) continue; //Skip source pixels
+
+      if (depth_image[i] != 20000 && source_depth_image[i] == 20000) {
+        new_pixel_buffer[i_in] = succ_depth_buffer[i_in];
+      } else {
+        new_pixel_buffer[i_in] = 1.0; // max range
+      }
+    }
+  }
+  kinect_simulator_->rl_->getPointCloudFromBuffer (cloud_out, new_pixel_buffer,
+                                                   true,
+                                                   env_params_.camera_pose);
+
 
   // Compute costs
   int target_cost = 0, source_cost = 0, total_cost = 0;
@@ -1390,6 +1339,16 @@ int EnvObjectRecognition::GetTrueCost(const State source_state,
   fprintf(pFile, "Render:   %.4f ms\n", 1000.f * diff);
   fclose(pFile);
 #endif
+  // if (image_debug_) {
+  //   std::stringstream ss1, ss2;
+  //   ss1.precision(20);
+  //   ss2.precision(20);
+  //   ss1 << kDebugDir + "cloud_" << child_id << ".pcd";
+  //   ss2 << kDebugDir + "cloud_aligned_" << child_id << ".pcd";
+  //   pcl::PCDWriter writer;
+  //   writer.writeBinary (ss1.str()  , *cloud_in);
+  //   writer.writeBinary (ss2.str()  , *cloud_out);
+  // }
   return total_cost;
 }
 
@@ -1557,7 +1516,7 @@ int EnvObjectRecognition::GetSourceCost(const PointCloudPtr
     float dist = pcl::euclideanDistance(obj_center, projected_point);
 
     // bool point_in_collision = dist <= obj_models_[last_obj_id].inscribed_rad();
-    bool point_in_collision = dist <= 3.0 * obj_models_[last_obj_id].rad();
+    bool point_in_collision = dist <= 3.0 * obj_models_[last_obj_id].GetCircumscribedRadius();
     // bool point_in_collision = num_neighbors_found >= kCollisionPointsThresh;
 
 
@@ -1781,16 +1740,6 @@ void EnvObjectRecognition::SetScene() {
     pcl::PolygonMesh::Ptr cloud (new pcl::PolygonMesh (
                                    obj_model.mesh()));
 
-    // if (ii == 1) {
-    //   Eigen::Matrix4f M;
-    //   M <<
-    //     1, 0 , 0 , 0,
-    //     0, 1 , 0 , 2,
-    //     0, 0 , 1 , 0,
-    //     0, 0 , 0 , 1;
-    //   TransformPolyMesh(cloud, cloud, M);
-    // }
-
     PolygonMeshModel::Ptr model = PolygonMeshModel::Ptr (new PolygonMeshModel (
                                                            GL_POLYGON, cloud));
     scene_->add (model);
@@ -1971,7 +1920,7 @@ void EnvObjectRecognition::SetObservation(vector<int> object_ids,
   // kinect_simulator_->rl_->getPointCloud (observed_cloud_, true,
   //                                                 kinect_simulator_->camera_->getPose ());
   kinect_simulator_->rl_->getPointCloud (observed_cloud_, true,
-                                         env_params_.camera_pose);
+                                         env_params_.camera_pose); //GLOBAL
   downsampled_observed_cloud_ = DownsamplePointCloud(observed_cloud_);
 
 
@@ -2408,4 +2357,48 @@ State EnvObjectRecognition::ComputeGreedyICPPoses() {
   return greedy_state;
 }
 
+State EnvObjectRecognition::ComputeVFHPoses() {
+  vector<PointCloudPtr> cluster_clouds;
+  DoEuclideanClustering(observed_cloud_, &cluster_clouds);
+  const size_t num_clusters = cluster_clouds.size();
+
+  for (size_t ii = 0; ii < num_clusters; ++ii) {
+    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud (new
+                                               pcl::PointCloud<pcl::PointXYZ>);
+    copyPointCloud(*cluster_clouds[ii], *cloud);
+
+    // Eigen::Matrix4f world_to_cam = cam_to_world_.matrix().cast<float>();
+    // Eigen::Vector4f centroid;
+    // compute3DCentroid(*cloud, centroid);
+    // demeanPointCloud(*cloud, centroid, *cloud);
+    // Eigen::Matrix4f cam_to_world;
+    // Eigen::Matrix4f transform;
+    // transform <<  1,  0,  0, 0,
+    //           0, -1,  0, 0,
+    //           0,  0, -1, 0,
+    //           0,  0,  0, 1;
+
+
+    // transformPointCloud(*cloud, *cloud, transform);
+
+
+
+    pcl::PCDWriter writer;
+    stringstream ss;
+    ss.precision(20);
+    ss << kDebugDir + "cluster_" << ii << ".pcd";
+    writer.writeBinary (ss.str()  , *cloud);
+
+    float roll, pitch, yaw;
+    vfh_pose_estimator_.getPose(cloud, roll, pitch, yaw, true);
+    std::cout << roll << " " << pitch << " " << yaw << std::endl;
+  }
+
+  State vfh_state;
+  return vfh_state;
+}
+
+void EnvObjectRecognition::SetDebugOptions(bool image_debug) {
+  image_debug_ = image_debug;
+}
 

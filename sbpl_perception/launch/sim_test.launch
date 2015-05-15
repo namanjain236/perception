@@ -10,6 +10,23 @@
   <!--<include file="$(find pr2_description)/robots/upload_pr2.launch" />-->
   <!--<param name="robot_description" command="$(find xacro)/xacro.py '$(find pr2_description)/robots/pr2.urdf.xacro'" />-->
 
+
+
+      <param name="reference_frame" value="/base_link"/>
+      <param name="image_debug" value="$(arg image_debug)"/>
+      <param name="icp_succ" value="$(arg icp_succ)"/>
+      <!-- <param name="reference_frame" value="head_mount_kinect_rgb_optical_frame"/>&#45;&#45;> -->
+       <rosparam param="model_files" subst_value="True">
+[$(find sbpl_perception)/data/RAM/cad_models/200.580.66.ply,
+$(find sbpl_perception)/data/RAM/cad_models/clorox.ply,
+$(find sbpl_perception)/data/RAM/cad_models/odwalla_jug.ply]
+      </rosparam>
+      <rosparam param="model_symmetries">
+        <!-- [1, 0, 0, 0, 0] -->
+        [1, 0, 0]
+       </rosparam>
+
+
     <node pkg="sbpl_perception" type="sim_test" name="sim_test" output="screen" launch-prefix="mpirun -n 2" respawn="false">
       <param name="reference_frame" value="/base_link"/>
       <param name="image_debug" value="$(arg image_debug)"/>
