@@ -42,6 +42,8 @@
 #include <Eigen/Dense>
 #include <unordered_map>
 
+//Number of objects currectly hash defed to 3. Please change it if the scene
+//has more objects
 #define NUM_MODELS 3
 
 inline double WrapAngle(double x) {
@@ -113,18 +115,34 @@ struct StateProperties {
   unsigned short last_max_depth;
 };
 
+
+//************PART OF MPI***************//
+//send msg struct used for doing a scatter
 typedef struct {
+  //array of all the source ids corresponds to std::vector<int> object_ids;
   int source_ids[NUM_MODELS];
+  //x,y,theta for the discposes. Hence we do 3 times NUM_MODELS. Corresponds to
+  //std::vector<DiscPose> disc_object_poses;
   int source_disc[NUM_MODELS*3];
+  //x,y,theta for the poses. Hence we do 3 times NUM_MODELS. Corresponds to
+  //std::vector<DiscPose> disc_object_poses;
   double source_pose[NUM_MODELS*3];
+  //array of candidate ids. Same as source
   int cand_ids[NUM_MODELS];
+  //x,y,theta for the discposes. Hence we do 3 times NUM_MODELS
   int cand_disc[NUM_MODELS*3];
+  //x,y,theta for the poses. Hence we do 3 times NUM_MODELS
   double cand_pose[NUM_MODELS*3];
+  //source id
   int source_id;
+  //candidate id
   int cand_id;
+  //a valid flag to mark if the struct is valid or not
   int valid;
 } SendMsg;
 
+//struct used to reveive messages using gather
+//similar in structure with the SendMsg struct above
 typedef struct {
   int child_ids[NUM_MODELS];
   int child_disc[NUM_MODELS*3];
@@ -134,6 +152,7 @@ typedef struct {
   int cost;
   int valid;
 } RecvMsg;
+//**********END OF MPI **************//
 
 // class EnvObjectRecognition : public DiscreteSpaceInformation {
 class EnvObjectRecognition : public EnvironmentMHA {
@@ -141,37 +160,41 @@ class EnvObjectRecognition : public EnvironmentMHA {
   EnvObjectRecognition(int size, int rank);
   EnvObjectRecognition();
   ~EnvObjectRecognition();
+  //MPI Process ID
   int id;
+  //NUmber of Processors used in MPI
   int num_proc;
   void LoadObjFiles(const std::vector<std::string> &model_files,
                     const std::vector<bool> model_symmetric);
   void SetScene();
 
+  //********MPI RELATED FUNCTIONS******//
   int ExpectedCountScatter(int *expected);
   void DataScatter(SendMsg* sendbuf, SendMsg* getbuf, int expected_count);
-  int GetRecvdState(State *work_source_state, 
+  int GetRecvdState(State *work_source_state,
                     State *work_cand_succs,
                     int *work_source_id,
                     int *work_cand_id,
                     SendMsg* dummy,
                     int val);
-  void SendbufPopulate(SendMsg *sendbuf, 
+  void SendbufPopulate(SendMsg *sendbuf,
     State s, State p, int sid, int pid);
-  void RecvbufPopulate(RecvMsg* sendbuf, 
+  void RecvbufPopulate(RecvMsg* sendbuf,
                         State& s,
                         StateProperties& child_properties,
                         int cost);
-  int GetRecvdResult(State *work_source_state, 
+  int GetRecvdResult(State *work_source_state,
                                           StateProperties *child_properties_result,
                                           int *cost_result,
                                           RecvMsg* dummy,
                                           int tot);
 
-  void DataGather(RecvMsg* recvbuf, 
+  void DataGather(RecvMsg* recvbuf,
                     RecvMsg* getresult, int expected_count);
   void DebugPrint(State s);
   void DebugPrintArray(SendMsg* s);
   void DebugPrintArrayRecv(RecvMsg* s);
+  //********END OF MPI RELATED FUNCTIONS******//
 
   void WriteSimOutput(std::string fname_root);
   void PrintState(int state_id, std::string fname);
@@ -219,7 +242,7 @@ class EnvObjectRecognition : public EnvironmentMHA {
   VFHPoseEstimator vfh_pose_estimator_;
   std::vector<Pose> vfh_poses_;
   std::vector<int> vfh_ids_;
-  
+
 
   void GetSuccs(State source_state, std::vector<State> *succs,
                 std::vector<int> *costs);

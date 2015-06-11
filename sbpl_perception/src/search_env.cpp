@@ -54,11 +54,11 @@ static double diff = 0;
 #endif
 
 
-EnvObjectRecognition::EnvObjectRecognition(int rank, int numproc) : 
+EnvObjectRecognition::EnvObjectRecognition(int rank, int numproc) :
   image_debug_(false),
   id(rank),
   num_proc(numproc) {
-  
+
   // OpenGL requires argc and argv
   char **argv;
   argv = new char *[2];
@@ -135,7 +135,7 @@ EnvObjectRecognition::EnvObjectRecognition(int rank, int numproc) :
   pcl::console::setVerbosityLevel(pcl::console::L_ALWAYS);
 }
 
-EnvObjectRecognition::EnvObjectRecognition() : 
+EnvObjectRecognition::EnvObjectRecognition() :
   image_debug_(false)
  {
   // OpenGL requires argc and argv
@@ -517,6 +517,14 @@ void EnvObjectRecognition::SendbufPopulate(SendMsg *sendbuf, State s, State p, i
   sendbuf->valid = 1;
 }
 
+/**
+ * [EnvObjectRecognition::ExpectedCountScatter description] Master process
+ *                        scatters the size of the dataset that each worker
+ *                        needs to handle
+ *
+ * @param  expected [description] buffer of the data to be scattered
+ * @return          [description] size of the data sent to each worker
+ */
 int EnvObjectRecognition::ExpectedCountScatter(int *expected) {
   int val = 0;
   // std::cout << "Proc: " << id << "reached ExpectedCountScatter" << std::endl;
@@ -526,6 +534,19 @@ int EnvObjectRecognition::ExpectedCountScatter(int *expected) {
   return val;
 }
 
+/**
+ * [EnvObjectRecognition::DataScatter description] Master node scatters the
+ *                                                 actual data to all workers
+ *
+ * @param sendbuf        [description]             Data buffer used by master
+ *                                                 to send data
+ *
+ * @param getbuf         [description]             Data buffer used by wrokers
+ *                                                 to receive data
+ *
+ * @param expected_count [description]             size of data sent to each
+ *                                                 client from master
+ */
 void EnvObjectRecognition::DataScatter(SendMsg* sendbuf, SendMsg* getbuf, int expected_count) {
   int nitems = 9;
   int blocklengths[9] = {NUM_MODELS, NUM_MODELS*3, NUM_MODELS*3,
@@ -549,13 +570,29 @@ void EnvObjectRecognition::DataScatter(SendMsg* sendbuf, SendMsg* getbuf, int ex
   MPI_Type_create_struct(nitems, blocklengths, offset, types, &mpi_sendbuf);
   MPI_Type_commit(&mpi_sendbuf);
   std::cout << "Proc: " << id << "going to Scatter" << std::endl;
-  MPI_Scatter(sendbuf, expected_count, mpi_sendbuf, 
+  MPI_Scatter(sendbuf, expected_count, mpi_sendbuf,
                 getbuf, expected_count, mpi_sendbuf, 0, MPI_COMM_WORLD);
   std::cout << "Proc: " << id << "left Scatter" << std::endl;
 
 }
 
-int EnvObjectRecognition::GetRecvdState(State *work_source_state, 
+/**
+ * [EnvObjectRecognition::GetRecvdState description] populates the work_source_state,
+ *                                                   work_cand_succs structs for
+ *                                                   all of the 3 vectors
+ *                                                   from dummy
+ * @param  work_source_state [description] work_source_state of struct STATE
+ * `                                       which gets filled
+ * @param  work_cand_succs   [description] work_cand_succs of struct STATE
+ * `                                       which gets filled
+ * @param  work_source_id    [description] source id
+ * @param  work_cand_id      [description] candidate id
+ * @param  dummy             [description] dummy struct from which we take the
+ *                                         data from
+ * @param  val               [description] amount of data
+ * @return                   [description] returns the valid number of elements
+ */
+int EnvObjectRecognition::GetRecvdState(State *work_source_state,
                                           State *work_cand_succs,
                                           int *work_source_id,
                                           int *work_cand_id,
@@ -563,20 +600,20 @@ int EnvObjectRecognition::GetRecvdState(State *work_source_state,
                                           int val) {
   int count = 0;
   std::cout << "Proc: " << id << "reached start of GetRecvdState" << std::endl;
+  //loop over the expected count
   for (int i = 0; i < val; i++) {
-    // DebugPrintArray(dummy);
-    
+
+    //check if entry is valid
     if(dummy[i].valid == 1){
+      //increment the valid count
       count++;
+      //populate the oject_id vector of the source
       for(int j = 0; j < NUM_MODELS; j++){
         if( (dummy[i].source_ids)[j] != -1){
           int int_add = (dummy[i].source_ids)[j];
           work_source_state[i].object_ids.push_back(int_add);
         }
       }
-
-      // std::cout << i << " : " << val << std::endl;
-      // std::cout << "Proc: " << id << "reached start of GetRecvdState 1" << std::endl;
 
       int j;
       for(int k = 0; k < NUM_MODELS; k++){
@@ -610,8 +647,6 @@ int EnvObjectRecognition::GetRecvdState(State *work_source_state,
       }
 
       // std::cout << "Proc: " << id << "reached start of GetRecvdState 3" << std::endl;
-
-      //cand
 
       // DebugPrintArray(&dummy[i]);
 
@@ -666,7 +701,16 @@ int EnvObjectRecognition::GetRecvdState(State *work_source_state,
   return count;
 }
 
-void EnvObjectRecognition::RecvbufPopulate(RecvMsg* sendbuf, 
+/**
+ * [EnvObjectRecognition::RecvbufPopulate description] populates the sendbuf
+ *                                                     buffer before gather
+ * @param sendbuf          [description] buffer to be populated
+ * @param s                [description] state struct from which we populate
+ * @param child_properties [description] child properties struct from which we
+ *                                       populate
+ * @param cost             [description] cost of this iteration
+ */
+void EnvObjectRecognition::RecvbufPopulate(RecvMsg* sendbuf,
                                             State& s,
                                             StateProperties& child_properties,
                                             int cost) {
@@ -706,6 +750,12 @@ void EnvObjectRecognition::RecvbufPopulate(RecvMsg* sendbuf,
 
 }
 
+/**
+ * [EnvObjectRecognition::DataGather description] perform the data gather
+ * @param recvbuf        [description]  buffer which workers uses to send data to master
+ * @param getresult      [description]  buffer whcih master uses to gathers the result
+ * @param expected_count [description]  size of data that the master expects
+ */
 void EnvObjectRecognition::DataGather(RecvMsg* recvbuf, RecvMsg* getresult, int expected_count) {
   int nitems = 7;
   int blocklengths[7] = {NUM_MODELS, NUM_MODELS*3, NUM_MODELS*3, 1, 1, 1, 1};
@@ -724,11 +774,20 @@ void EnvObjectRecognition::DataGather(RecvMsg* recvbuf, RecvMsg* getresult, int 
 
   MPI_Type_create_struct(nitems, blocklengths, offset, types, &mpi_recvbuf);
   MPI_Type_commit(&mpi_recvbuf);
-  MPI_Gather(recvbuf, expected_count, mpi_recvbuf, 
+  MPI_Gather(recvbuf, expected_count, mpi_recvbuf,
                 getresult, expected_count, mpi_recvbuf, 0, MPI_COMM_WORLD);
 }
 
-int EnvObjectRecognition::GetRecvdResult(State *work_source_state, 
+/**
+ * [EnvObjectRecognition::GetRecvdResult description] collects the data gathererd and puts in the required format
+ * @param  work_source_state       [description]      source state struct which gets populated
+ * @param  child_properties_result [description]      StateProperties struct which gets populated
+ * @param  cost_result             [description]      cost result from the calculation
+ * @param  dummy                   [description]      dummy node on which we receive the data
+ * @param  tot                     [description]      size of the data
+ * @return                         [description]      total valid count
+ */
+int EnvObjectRecognition::GetRecvdResult(State *work_source_state,
                                           StateProperties *child_properties_result,
                                           int *cost_result,
                                           RecvMsg* dummy,
@@ -778,6 +837,7 @@ int EnvObjectRecognition::GetRecvdResult(State *work_source_state,
   return count;
 }
 
+//*****This method implements the calculations of successors parallely*****//
 void EnvObjectRecognition::GetSuccs(int source_state_id,
                                     vector<int> *succ_ids, vector<int> *costs) {
   succ_ids->clear();
@@ -859,35 +919,34 @@ void EnvObjectRecognition::GetSuccs(int source_state_id,
     }
   }
 
-  
+
   // Awesome work starts
 
-  // int number = 3343;
-  // MPI_Send(&number, 1, MPI_INT, 1, 0, MPI_COMM_WORLD);
-
   // std::cout << "Proc: " << id << " reached start of awesome code" << std::endl;
+
+  // calculate the size of the buffer the master needs to accumulate
+  // all data to be sent to workers. WE allocate a size which is the next
+  // multiple of the actual size.
   int next_multiple = candidate_succ_ids.size() + num_proc - (candidate_succ_ids.size() % num_proc);
+
+  //allocate the sendbuf to be used by the master using which it accumulates
+  //all the data to be sent to all the workers
   SendMsg* sendbuf = (SendMsg*) malloc(next_multiple * sizeof(SendMsg));
+
+  //invalidate all entries
   for (int i = candidate_succ_ids.size(); i < next_multiple; i++)
     sendbuf[i].valid = -1;
   SendMsg* tempbuf = sendbuf;
 
-  //populate sendbuf buffer
 
   int sz = candidate_succ_ids.size();
-  
+
+  //OPENMP PARALLEL FOR OPTIMIZATION
+  //Populate the buffer to be sent to all workers
   #pragma omp parallel for
   for(unsigned int ii = 0; ii < sz; ++ii)
     SendbufPopulate(&tempbuf[ii], source_state, candidate_succs[ii], source_state_id, candidate_succ_ids[ii]);
 
-  // {
-    // DebugPrint(candidate_succs[ii]);
-    // if (ii < 8) {
-    //   DebugPrint(candidate_succs[ii]);
-    //   DebugPrintArray(tempbuf);
-    // }
-  //   tempbuf++;
-  // }
 
   //count array so workers can allocate appropriately
   int* expected_count = (int *) malloc(num_proc * sizeof(int));
@@ -900,22 +959,23 @@ void EnvObjectRecognition::GetSuccs(int source_state_id,
 
   std::cout << "Proc: " << id << "populated buffer to send " << val << std::endl;
 
-  // Till now master only executes
 
-  //expected_count_scatter
+  //expected_count_scatter. Scatter the expected amount of data to each worker
+  //so workers can make appropriate allocations
   ExpectedCountScatter(expected_count);
   free(expected_count);
 
+  //dummy is the buffer on which the scattered data is received
   SendMsg* dummy = (SendMsg*) malloc(val * sizeof(SendMsg));
+  //perform the scattering of the actual data
   DataScatter(sendbuf, dummy, val);
   std::cout << "Proc: " << id << "printing " << std::endl;
   // DebugPrintArray(dummy);
 
   free(sendbuf);
-  
+
   State* work_source_state = new State[val];
 
-  // State* work_cand_succs = (State*) malloc(val * sizeof(State));
   State* work_cand_succs = new State[val];
 
   int* work_source_id = (int *) malloc(val * sizeof(int));
@@ -924,7 +984,6 @@ void EnvObjectRecognition::GetSuccs(int source_state_id,
   int count = GetRecvdState(work_source_state, work_cand_succs,
                 work_source_id, work_cand_id, dummy, val);
 
-  // MPI_Barrier(MPI_COMM_WORLD);
   // std::cout << "proc "<< id <<": reached MPI_Barrier" << std::endl;
   free(dummy);
 
@@ -935,7 +994,7 @@ void EnvObjectRecognition::GetSuccs(int source_state_id,
   int* cost = (int *) malloc(val * sizeof(int));
 
   for (int ii = 0; ii < count; ii++) {
-    cost[ii] = GetTrueCost(work_source_state[ii], 
+    cost[ii] = GetTrueCost(work_source_state[ii],
                             work_cand_succs[ii],
                             work_source_id[ii],
                             work_cand_id[ii],
@@ -958,13 +1017,14 @@ void EnvObjectRecognition::GetSuccs(int source_state_id,
 
   std::cout << "proc "<< id <<": done RecvbufPopulate" << std::endl;
 
+  //causes error for some reason if we delete the allocations. hence just leaving them commented out
   // delete adjusted_child_state;
   // delete child_properties;
   // delete cost;
 
   RecvMsg* getresult = (RecvMsg*) malloc(next_multiple * sizeof(RecvMsg));
   std::cout << "val: " << val << "next_multiple: " << next_multiple << std::endl;
-  
+
   DataGather(recvbuf, getresult, val);
   std::cout << "proc "<< id <<": done DataGather" << std::endl;
 
@@ -975,7 +1035,7 @@ void EnvObjectRecognition::GetSuccs(int source_state_id,
 
   int* cost_result = (int *) malloc(candidate_succ_ids.size() * sizeof(int));
 
-  GetRecvdResult(child_result, 
+  GetRecvdResult(child_result,
                 child_properties_result,
                 cost_result,
                 getresult,
